@@ -2,7 +2,7 @@
   'use strict';
   const D = {
     ar: {
-      appName: 'Shilagram', myKey: 'مفتاحي: ', noChats: 'لا توجد محادثات.<br>اضغط 🔍 للبحث عن صديق بمفتاحه، أو 📷 لمسح QR، أو 👥 لإنشاء مجموعة.',
+      appName: 'Shilagram', myKey: 'مفتاحي: ', noChats: 'لا توجد محادثات.<br>استخدم أيقونة البحث للعثور على صديق بمفتاحه، أو أيقونة المسح لقراءة QR، أو أيقونة الأشخاص لإنشاء مجموعة.',
       online: 'متصل الآن', offline: 'غير متصل', members: ' أعضاء', sticker: '🖼 ملصق', photo: '📷 صورة', voice: '🎤 رسالة صوتية', file: '📎 ملف', deleted: 'تم حذف هذه الرسالة', edited: 'معدّلة',
       connecting: 'جاري الاتصال…', libFail: 'تعذر تحميل مكتبة الاتصال', serverLost: 'انقطع الاتصال بالخادم…', keyBusy: 'مفتاحك مفتوح في جهاز آخر', noNet: 'لا يوجد اتصال بالإنترنت',
       typeMsg: 'اكتب رسالة', askName: 'ما اسمك؟', user: 'مستخدم',
@@ -30,10 +30,16 @@
       permSend: 'إرسال الرسائل', permMedia: 'إرسال الوسائط والملفات', permInfo: 'تعديل اسم المجموعة وصورتها', permAdd: 'إضافة أعضاء',
       removeMember: 'إزالة من المجموعة', confirmRemove: 'إزالة هذا العضو من المجموعة؟', leaveGroup: 'مغادرة المجموعة', confirmLeave: 'مغادرة المجموعة وحذفها من جهازك؟',
       groupLeft: 'لم تعد عضوا في هذه المجموعة', noPerm: 'ليست لديك صلاحية', memberPerms: 'صلاحيات الأعضاء العاديين', back: 'رجوع', me: 'أنا', ownerOffline: 'سيُنفَّذ طلبك عندما يتصل المدير', noMembersToAdd: 'كل أصدقائك موجودون في المجموعة', groupPhoto: 'صورة المجموعة',
+      saveBtn: 'حفظ', editBtn: 'تعديل', chName: 'تغيير اسم المستخدم', chUser: 'تغيير اليوزر', chFrame: 'تغيير لون اطار الافتار', chBio: 'تغيير البايو', chCover: 'تغيير صورة الغلاف', chAvatar: 'تغيير الافتار',
+      fieldName: 'الاسم', fieldUser: 'اليوزر', fieldKey: 'المفتاح', fieldBio: 'البايو', scanToAdd: 'امسح الرمز للإضافة', qrHint: 'يستطيع أصدقاؤك مسح هذا الرمز من التطبيق لإضافتك.', keyCopied: 'تم نسخ المفتاح', pickColor: 'اختر لونا',
+      fontSz: 'حجم الخط', themeCustom: 'تخصيص ثيم', saveModel: 'حفظ نموذج البرنامج', saveModelP: 'احفظ نسخة من هويتك ومحادثاتك وإعداداتك في ملف مشفّر بكلمة مرور، واستعدها متى شئت.',
+      downloads: 'خانة التنزيلات', noDownloads: 'لا توجد ملفات أو صور أو رسائل صوتية بعد.', stickersPage: 'مكدس الملصقات', addSticker: 'ملصق جديد', callSet: 'اعدادات المكالمة',
+      custHeader: 'لون الشريط العلوي', custAccent: 'اللون الأساسي', custBg: 'لون الخلفية', custMine: 'فقاعة رسائلي', custTheirs: 'فقاعة رسائلهم', custReset: 'إعادة الثيم الأصلي', custP: 'غيّر ألوان الثيم الحالي كما تحب.',
+      callEcho: 'إلغاء الصدى', callNoise: 'تقليل الضجيج', callAgc: 'ضبط مستوى الصوت تلقائيا', callFront: 'استخدام الكاميرا الأمامية', callIce: 'خوادم الاتصال (STUN/TURN)',
       msgFrom: 'رسالة من ', secure: '🔒 مشفّرة من طرف لطرف', unsecure: 'جاري تأمين الاتصال…', done: 'تم'
     },
     en: {
-      appName: 'Shilagram', myKey: 'My key: ', noChats: 'No chats yet.<br>Tap 🔍 to find a friend by key, 📷 to scan a QR, or 👥 to create a group.',
+      appName: 'Shilagram', myKey: 'My key: ', noChats: 'No chats yet.<br>Use the search icon to find a friend by key, the scan icon to read a QR, or the people icon to create a group.',
       online: 'online', offline: 'offline', members: ' members', sticker: '🖼 Sticker', photo: '📷 Photo', voice: '🎤 Voice message', file: '📎 File', deleted: 'This message was deleted', edited: 'edited',
       connecting: 'Connecting…', libFail: 'Could not load the connection library', serverLost: 'Lost connection to the server…', keyBusy: 'Your key is open on another device', noNet: 'No internet connection',
       typeMsg: 'Type a message', askName: 'What is your name?', user: 'User',
@@ -61,6 +67,12 @@
       permSend: 'Send messages', permMedia: 'Send media and files', permInfo: 'Edit group name and photo', permAdd: 'Add members',
       removeMember: 'Remove from group', confirmRemove: 'Remove this member from the group?', leaveGroup: 'Leave group', confirmLeave: 'Leave the group and delete it from your device?',
       groupLeft: 'You are no longer a member of this group', noPerm: 'You do not have permission', memberPerms: 'Ordinary member permissions', back: 'Back', me: 'Me', ownerOffline: 'Your request will be applied when the manager comes online', noMembersToAdd: 'All your friends are already in the group', groupPhoto: 'Group photo',
+      saveBtn: 'Save', editBtn: 'Edit', chName: 'Change display name', chUser: 'Change username', chFrame: 'Change avatar frame color', chBio: 'Change bio', chCover: 'Change cover photo', chAvatar: 'Change avatar',
+      fieldName: 'Name', fieldUser: 'Username', fieldKey: 'Key', fieldBio: 'Bio', scanToAdd: 'Scan to add', qrHint: 'Friends can scan this code in the app to add you.', keyCopied: 'Key copied', pickColor: 'Pick a color',
+      fontSz: 'Font size', themeCustom: 'Customize theme', saveModel: 'Save app model', saveModelP: 'Save your identity, chats and settings to a password-encrypted file and restore them any time.',
+      downloads: 'Downloads', noDownloads: 'No files, photos or voice messages yet.', stickersPage: 'Sticker stack', addSticker: 'New sticker', callSet: 'Call settings',
+      custHeader: 'Top bar color', custAccent: 'Accent color', custBg: 'Background color', custMine: 'My bubbles', custTheirs: 'Their bubbles', custReset: 'Restore original theme', custP: 'Change the colors of the current theme as you like.',
+      callEcho: 'Echo cancellation', callNoise: 'Noise suppression', callAgc: 'Automatic gain control', callFront: 'Use front camera', callIce: 'Connection servers (STUN/TURN)',
       msgFrom: 'Message from ', secure: '🔒 End-to-end encrypted', unsecure: 'Securing connection…', done: 'Done'
     }
   };

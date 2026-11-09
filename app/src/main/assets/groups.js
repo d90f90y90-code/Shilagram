@@ -5,7 +5,8 @@
   const MEMBER_DEFAULT = { send: 1, media: 1, info: 0, add: 0 }, ASSIST = { send: 1, media: 1, info: 1, add: 1 };
   const clone = o => JSON.parse(JSON.stringify(o));
   const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
-  const okAv = v => v === '' || (typeof v === 'string' && v.length <= 40000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(v));
+  const okImg = (v, max) => v === '' || (typeof v === 'string' && v.length <= max && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(v));
+  const okAv = v => okImg(v, 40000);
 
   function can(g, k, p) {
     if (!g || !g.mem || !g.mem[k]) return false;
@@ -62,5 +63,5 @@
     }
     return n;
   }
-  G.ShilaGroups = { can, role, canon, validState, applyOp, PERMS, MEMBER_DEFAULT, okAv };
+  G.ShilaGroups = { can, role, canon, validState, applyOp, PERMS, MEMBER_DEFAULT, okAv, okImg };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

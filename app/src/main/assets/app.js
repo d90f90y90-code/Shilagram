@@ -13,7 +13,7 @@
   // ---------- state ----------
   await DB.init();
   let ME = await DB.get('me'), ID = await DB.get('identity'), S = (await DB.get('state')) || { c: {}, g: {}, ice: '', lang: '' };
-  S.c = S.c || {}; S.g = S.g || {}; S.set = S.set || { theme: 'auto', fs: 15, bg: { t: 'none' } };
+  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {} }, S.set || {}); S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
   I18N.set(S.lang || I18N.detect());
   if (!ME) {
     const mig = await DB.migrateLegacy();
@@ -204,7 +204,7 @@
     $('#mk').textContent = t('myKey') + ME.key;
     const L = $('#list'); L.innerHTML = '';
     const rows = [...Object.entries(S.c).map(([id, o]) => [id, o, 0]), ...Object.entries(S.g).map(([id, o]) => [id, o, 1])].sort((a, b) => (b[1].last || 0) - (a[1].last || 0));
-    if (!rows.length) L.innerHTML = '<div class="empty">' + t('noChats') + '</div>';
+    if (!rows.length) L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg>' + t('noChats') + '</div>';
     rows.forEach(([id, o, g]) => {
       const r = document.createElement('div'); r.className = 'row';
       r.innerHTML = '<div class="av' + (!g && on(id) ? ' on' : '') + '"></div><div class="mid"><b></b><span></span></div><div class="meta"><div></div></div>';
@@ -278,43 +278,92 @@
   // ---------- sheets ----------
   function sheet(n) { $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'q') stopScan(); }
   const closeSheet = () => sheet(0);
-  window.__back = () => { if (call) return 1; if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (cur) { back(); return 1; } return 0; };
+  window.__back = () => { if (call) return 1; if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
   $('#x').onclick = closeSheet; $('#sh').onclick = e => { if (e.target.id === 'sh') closeSheet(); };
 
+  // ---------- pages ----------
+  const pgStack = [], PG_ON = {};
+  function showPage(n) { const el = $('#pg-' + n); if (!el || pgStack[pgStack.length - 1] === n) return; pgStack.push(n); el.style.zIndex = 10 + pgStack.length; el.classList.add('on'); if (PG_ON[n]) PG_ON[n](); }
+  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'dl') dlClear(); }
+  $$('[data-pg]').forEach(b => b.onclick = () => showPage(b.dataset.pg)); $$('.pback').forEach(b => b.onclick = closePage);
+  const svgUri = x => 'data:image/svg+xml,' + encodeURIComponent(x);
+  const DEF_AV = svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#d9cdf0"/><circle cx="100" cy="78" r="38" fill="#7a65a8"/><path d="M28 200c0-42 32-72 72-72s72 30 72 72z" fill="#7a65a8"/></svg>');
+  const DEF_COVER = svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b2475"/><stop offset="1" stop-color="#150f29"/></linearGradient></defs><rect width="800" height="400" fill="url(#g)"/><g fill="#e9c46a" opacity=".85"><circle cx="90" cy="70" r="3"/><circle cx="220" cy="140" r="2"/><circle cx="640" cy="60" r="3.5"/><circle cx="720" cy="190" r="2"/><circle cx="470" cy="320" r="2.5"/><circle cx="150" cy="330" r="2"/><circle cx="330" cy="90" r="2"/></g><path d="M90 70L220 140 330 90 470 320M640 60L720 190" fill="none" stroke="#8b5cf6" stroke-width="2" opacity=".55"/><circle cx="690" cy="330" r="80" fill="#8b5cf6" opacity=".2"/><circle cx="110" cy="260" r="50" fill="#e9c46a" opacity=".08"/></svg>');
+  const bigAv = (el, src, fc) => { el.style.setProperty('--fc', fc || '#6f5b99'); el.style.backgroundImage = 'url("' + (src || DEF_AV) + '")'; el.textContent = ''; };
+  const FCS = ['#6f5b99', '#e9c46a', '#8b5cf6', '#2a8fd4', '#22c55e', '#ef4444', '#f97316', '#ec4899', '#ffffff', '#14b8a6'];
+
   // ---------- profile ----------
-  const USERRE = /^[A-Za-z][A-Za-z0-9_]{3,19}$/, noCtl = (x, n) => String(x == null ? '' : x).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n);
-  let pAv;
+  const USERRE = /^[A-Za-z][A-Za-z0-9_]{3,19}$/, FCRE = /^#[0-9a-fA-F]{6}$/, noCtl = (x, n) => String(x == null ? '' : x).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n);
+  let viewKey = null, draft = null, pAv;
   async function squareAvatar(file, size = 160) {
     const bm = await createImageBitmap(file), side = Math.min(bm.width, bm.height), cv = document.createElement('canvas'); cv.width = cv.height = size;
     cv.getContext('2d').drawImage(bm, (bm.width - side) / 2, (bm.height - side) / 2, side, side, 0, 0, size, size);
     for (let q = .85; q > .3; q -= .15) { const u = cv.toDataURL('image/jpeg', q); if (u.length <= 20000) return u; } return cv.toDataURL('image/jpeg', .3);
   }
+  async function coverImage(file) {
+    const bm = await createImageBitmap(file);
+    for (const [w, h] of [[640, 320], [480, 240], [320, 160]]) {
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const k = Math.max(w / bm.width, h / bm.height);
+      cv.getContext('2d').drawImage(bm, (w - bm.width * k) / 2, (h - bm.height * k) / 2, bm.width * k, bm.height * k);
+      for (let q = .8; q > .35; q -= .15) { const u = cv.toDataURL('image/jpeg', q); if (u.length <= 50000) return u; }
+    } throw new Error('big');
+  }
   const drawMine = () => avStyle($('#mav'), ME.av, (ME.name || '?')[0]);
-  const profileHdr = () => ({ t: 'pf', n: ME.name, u: ME.user || '', b: ME.bio || '', av: ME.av || '' });
+  const profileHdr = () => ({ t: 'pf', n: ME.name, u: ME.user || '', b: ME.bio || '', av: ME.av || '', cv: ME.cv || '', fc: ME.fc || '' });
   function broadcastProfile() { Object.keys(conns).forEach(k => on(k) && sealTo(conns[k], profileHdr())); }
   function receiveProfile(k, h) {
     const o = S.c[k]; if (!o) return; const n = noCtl(h.n, 30); if (n) o.name = n;
     const u = noCtl(h.u, 20); if (!u || USERRE.test(u)) o.un = u; o.bio = noCtl(h.b, 140);
     const av = String(h.av || ''); if (SG.okAv(av)) { if (av) o.av = av; else delete o.av; }
-    save(); list(); if (cur) drawHead();
+    const cv = String(h.cv || ''); if (SG.okImg(cv, 60000)) { if (cv) o.cv = cv; else delete o.cv; }
+    const fc = String(h.fc || ''); if (FCRE.test(fc)) o.fc = fc; else delete o.fc;
+    save(); list(); if (cur) drawHead(); if (viewKey === k && $('#pg-view').classList.contains('on')) fillView(k);
   }
-  function openProfile() {
-    pAv = undefined; $('#pn').value = ME.name; $('#pu').value = ME.user || ''; $('#pb').value = ME.bio || ''; $('#pue').textContent = ''; avStyle($('#pav'), ME.av, (ME.name || '?')[0]);
-    $('#mkk').value = ME.key; C.fingerprint(ID.pub).then(f => $('#myfp').textContent = f); $('#qrbox').classList.remove('on'); sheet('me');
+  // view page: what other people see (and the owner, with an Edit button)
+  function fillView(key) {
+    const me = key === ME.key, o = me ? ME : S.c[key]; if (!o) return; viewKey = key; const user = me ? o.user : o.un;
+    $('#vt').textContent = o.name; bigAv($('#vav'), o.av, o.fc); $('#vcov').style.backgroundImage = 'url("' + (o.cv || DEF_COVER) + '")';
+    $('#vn').textContent = o.name; $('#vu').textContent = user ? '@' + user : '—'; $('#vk').textContent = key; $('#vb').textContent = o.bio || '—';
+    $('#vedit').style.display = me ? '' : 'none'; $('#vsec').style.display = me ? 'none' : '';
+    const q = qrcode(0, 'M'); q.addData('shilagram:' + key); q.make(); $('#vqr').innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }).replace(/black/gi, '#2d1b57');
+    if (!me) { C.fingerprint(ID.pub).then(f => $('#secme').textContent = f); if (o.pk) C.fingerprint(C.unb64(o.pk)).then(f => $('#secthem').textContent = f); else $('#secthem').textContent = t('notVerified'); }
   }
-  $('#mav').onclick = openProfile; $('#pph').onclick = $('#pav').onclick = () => $('#pfile').click();
-  $('#pfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { pAv = await squareAvatar(f); avStyle($('#pav'), pAv, ''); } catch (x) { alert(t('tooBig')); } };
-  $('#prm').onclick = () => { pAv = ''; avStyle($('#pav'), '', ($('#pn').value || '?')[0]); };
-  $('#psv').onclick = () => {
-    const n = $('#pn').value.trim(), u = $('#pu').value.trim().replace(/^@/, ''); if (!n) return;
-    if (u && !USERRE.test(u)) return $('#pue').textContent = t('userBad');
-    ME.name = n; ME.user = u; ME.bio = noCtl($('#pb').value, 140); if (pAv !== undefined) { if (pAv) ME.av = pAv; else delete ME.av; }
-    DB.set('me', ME); drawMine(); broadcastProfile(); sheet(0);
+  function openProfileView(key) { fillView(key); showPage('view'); }
+  $('#mav').onclick = () => openProfileView(ME.key);
+  $('#vkr').onclick = () => { try { navigator.clipboard.writeText(viewKey); } catch (e) {} const b = $('#vk'); b.textContent = t('keyCopied'); setTimeout(() => b.textContent = viewKey, 1200); };
+  // edit page: changes are kept in a draft until "Save"
+  function renderEdit() {
+    bigAv($('#eav'), draft.av, draft.fc); $('#en').textContent = draft.name; $('#eu').textContent = draft.user ? '@' + draft.user : '';
+    $('#eb').textContent = [...draft.bio].slice(0, 60).join('') + ([...draft.bio].length > 60 ? '…' : ''); $('#efcs').style.background = draft.fc || '#6f5b99'; $('#ecov').style.backgroundImage = 'url("' + (draft.cv || DEF_COVER) + '")';
+  }
+  function openProfileEdit() { draft = { name: ME.name, user: ME.user || '', bio: ME.bio || '', av: ME.av || '', cv: ME.cv || '', fc: ME.fc || '' }; renderEdit(); showPage('edit'); }
+  $('#vedit').onclick = openProfileEdit; $('#ecancel').onclick = closePage;
+  $('#esv').onclick = () => {
+    Object.assign(ME, { name: draft.name, user: draft.user, bio: draft.bio }); ['av', 'cv', 'fc'].forEach(k => { if (draft[k]) ME[k] = draft[k]; else delete ME[k]; });
+    DB.set('me', ME); drawMine(); broadcastProfile(); closePage(); if (viewKey === ME.key) fillView(ME.key);
   };
-  $('#cpk').onclick = () => { $('#mkk').select(); try { navigator.clipboard.writeText(ME.key); } catch (e) { document.execCommand('copy'); } $('#cpk').textContent = t('copied'); setTimeout(() => $('#cpk').textContent = t('copyKey'), 1500); };
-  $('#qrb').onclick = () => {
-    const box = $('#qrbox'); if (box.classList.toggle('on')) { const q = qrcode(0, 'M'); q.addData('shilagram:' + ME.key); q.make(); box.innerHTML = q.createSvgTag({ cellSize: 6, margin: 4, scalable: true }); }
+  $('#eavb').onclick = $('#eav').onclick = () => $('#pfile').click(); $('#ecovb').onclick = $('#ecov').onclick = () => $('#cfile').click();
+  $('#pfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { draft.av = await squareAvatar(f); renderEdit(); } catch (x) { alert(t('tooBig')); } };
+  $('#cfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { draft.cv = await coverImage(f); renderEdit(); } catch (x) { alert(t('tooBig')); } };
+  let efKind;
+  function editField(kind) {
+    efKind = kind; const bio = kind === 'bio'; $('#eft').textContent = t(kind === 'name' ? 'chName' : kind === 'user' ? 'chUser' : 'chBio');
+    $('#efpw').style.display = bio ? 'none' : 'flex'; $('#efpw .efp').style.display = kind === 'user' ? '' : 'none'; $('#efa').style.display = bio ? '' : 'none'; $('#efe').textContent = '';
+    $('#efi').maxLength = kind === 'user' ? 20 : 30; $('#efi').dir = kind === 'user' ? 'ltr' : 'auto'; (bio ? $('#efa') : $('#efi')).value = draft[kind]; sheet('ef');
+  }
+  $$('[data-ef]').forEach(b => b.onclick = () => editField(b.dataset.ef));
+  $('#efok').onclick = () => {
+    const v = (efKind === 'bio' ? $('#efa') : $('#efi')).value.trim();
+    if (efKind === 'name') { if (!v) return; draft.name = noCtl(v, 30); }
+    else if (efKind === 'user') { const u = v.replace(/^@/, ''); if (u && !USERRE.test(u)) return $('#efe').textContent = t('userBad'); draft.user = u; }
+    else draft.bio = noCtl(v, 140);
+    renderEdit(); sheet(0);
   };
+  $('#efcb').onclick = () => {
+    const G = $('#fcs'); G.innerHTML = ''; FCS.forEach(c => { const b = document.createElement('button'); b.style.background = c; b.classList.toggle('on', (draft.fc || '#6f5b99') === c); b.onclick = () => { draft.fc = c; renderEdit(); sheet(0); }; G.append(b); });
+    $('#fci').value = draft.fc || '#6f5b99'; sheet('fc');
+  };
+  $('#fci').oninput = e => { draft.fc = e.target.value; renderEdit(); };
 
   // ---------- settings ----------
   const BGS = [{ t: 'none' }, { t: 'c', v: '#e8dcc8' }, { t: 'c', v: '#cfe3d4' }, { t: 'c', v: '#d5dff2' }, { t: 'c', v: '#2b2f3a' }, { t: 'c', v: '#1b1230' },
@@ -325,6 +374,8 @@
     const st = S.set, r = document.documentElement, bg = st.bg || { t: 'none' };
     if (st.theme === 'auto') r.removeAttribute('data-theme'); else r.setAttribute('data-theme', st.theme);
     r.style.setProperty('--fs', st.fs + 'px');
+    ['hd', 'pri', 'bg', 'out', 'in'].forEach(k => { const v = st.cust && st.cust[k]; if (v) r.style.setProperty('--' + k, v); else r.style.removeProperty('--' + k); });
+    if (st.cust && st.cust.bg) { const m = 'color-mix(in srgb,' + st.cust.bg + ' 82%,#000)'; r.style.setProperty('--bg2', m); r.style.setProperty('--chat', m); } else { r.style.removeProperty('--bg2'); r.style.removeProperty('--chat'); }
     $('#ms').style.background = (bg.t === 'c' || bg.t === 'g') ? bg.v : (bg.t === 'img' && bgUrl) ? 'center / cover url(' + bgUrl + ')' : '';
     if (NATIVE && NATIVE.setStatusColor) try { NATIVE.setStatusColor(getComputedStyle(r).getPropertyValue('--hd').trim()); } catch (e) {}
   }
@@ -336,16 +387,53 @@
       b.onclick = () => { st.bg = o.t === 'none' ? { t: 'none' } : { t: o.t, v: o.v }; save(); applySettings(); renderSettings(); }; G.append(b); });
     const im = document.createElement('button'); im.textContent = '🖼'; if (st.bg.t === 'img' && bgUrl) { im.style.backgroundImage = 'url(' + bgUrl + ')'; im.textContent = ''; } im.classList.toggle('on', st.bg.t === 'img'); im.onclick = () => $('#bgf').click(); G.append(im);
   }
-  $('#bst').onclick = () => { renderSettings(); $('#lng').value = I18N.lang; $('#ice').value = JSON.stringify(iceServers(), null, 1); $('#bat').style.display = NATIVE ? '' : 'none'; sheet('set'); };
+  $('#bst').onclick = () => showPage('set');
   $$('#thm button').forEach(b => b.onclick = () => { S.set.theme = b.dataset.th; save(); applySettings(); renderSettings(); });
   $('#fsz').oninput = e => { S.set.fs = +e.target.value; save(); applySettings(); };
   $('#bgf').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { await DB.set('bgimg', await shrink(f, 1080)); await loadBg(); S.set.bg = { t: 'img' }; save(); applySettings(); renderSettings(); } catch (x) { alert(t('tooBig')); } };
-  $('#lng').onchange = e => { S.lang = e.target.value; I18N.set(S.lang); save(); applyLang(); renderSettings(); };
   $('#icb').onclick = () => {
     try { const j = JSON.parse($('#ice').value); if (!Array.isArray(j)) throw 0; S.ice = JSON.stringify(j); } catch (e) { return alert('JSON?'); }
     save(); sheet(0); try { peer.destroy(); } catch (e) {} conns = {}; start();
   };
   $('#bat').onclick = () => NATIVE && NATIVE.batterySettings();
+
+  // ---------- settings pages ----------
+  PG_ON.theme = PG_ON.font = PG_ON.bg = renderSettings;
+  PG_ON.lang = () => $$('#lgs button').forEach(b => b.classList.toggle('on', b.dataset.lg === I18N.lang));
+  $$('#lgs button').forEach(b => b.onclick = () => { S.lang = b.dataset.lg; I18N.set(S.lang); save(); applyLang(); PG_ON.lang(); });
+  const toHex = c => { c = String(c).trim(); if (/^#[0-9a-f]{6}$/i.test(c)) return c; if (/^#[0-9a-f]{3}$/i.test(c)) return '#' + [...c.slice(1)].map(x => x + x).join(''); return '#888888'; };
+  const CUST = [['hd', 'custHeader'], ['pri', 'custAccent'], ['bg', 'custBg'], ['out', 'custMine'], ['in', 'custTheirs']];
+  PG_ON.custom = () => {
+    const L = $('#cust'); L.innerHTML = '';
+    CUST.forEach(([k, lbl]) => { const r = document.createElement('label'); r.className = 'crow'; r.innerHTML = '<span></span><input type="color">'; r.firstChild.textContent = t(lbl); const i = r.lastChild;
+      i.value = toHex((S.set.cust && S.set.cust[k]) || getComputedStyle(document.documentElement).getPropertyValue('--' + k)); i.oninput = () => { S.set.cust = S.set.cust || {}; S.set.cust[k] = i.value; save(); applySettings(); }; L.append(r); });
+  };
+  $('#custr').onclick = () => { S.set.cust = {}; save(); applySettings(); PG_ON.custom(); };
+  const CALLK = [['echo', 'callEcho'], ['noise', 'callNoise'], ['agc', 'callAgc'], ['front', 'callFront']];
+  PG_ON.call = () => {
+    const L = $('#callt'); L.innerHTML = '';
+    CALLK.forEach(([k, lbl]) => { const b = document.createElement('button'); b.className = 'tg'; b.textContent = (S.set.call[k] ? '✅ ' : '⬜ ') + t(lbl); b.onclick = () => { S.set.call[k] = S.set.call[k] ? 0 : 1; save(); PG_ON.call(); }; L.append(b); });
+    $('#ice').value = JSON.stringify(iceServers(), null, 1); $('#bat').style.display = NATIVE ? '' : 'none';
+  };
+  let dlUrls = [];
+  function dlClear() { dlUrls.forEach(u => URL.revokeObjectURL(u)); dlUrls = []; }
+  PG_ON.dl = async () => {
+    dlClear(); const L = $('#dll'); L.innerHTML = '';
+    const ms = (await DB.allMsgs()).filter(m => m.b && !m.del && ['img', 'vo', 'file'].includes(m.kind)).sort((a, b) => b.ts - a.ts);
+    if (!ms.length) { L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg>' + t('noDownloads') + '</div>'; return; }
+    ms.forEach(m => {
+      const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"></div><div class="mid"><b></b><span></span></div><svg class="ic"><use href="#i-download"/></svg>';
+      const th = r.firstChild; if (m.kind === 'img') { const u = URL.createObjectURL(m.b); dlUrls.push(u); th.style.backgroundImage = 'url(' + u + ')'; } else th.innerHTML = '<svg class="ic"><use href="#i-' + (m.kind === 'vo' ? 'mic' : 'file') + '"/></svg>';
+      r.querySelector('b').textContent = m.name || (m.kind === 'vo' ? t('voice') : t('photo'));
+      r.querySelector('.mid span').textContent = Math.ceil(m.b.size / 1024) + ' KB · ' + ((ch(m.chat) || {}).name || '') + ' · ' + new Date(m.ts).toLocaleDateString(I18N.lang); r.onclick = () => saveBlob(m); L.append(r);
+    });
+  };
+  function renderStPage() {
+    const G = $('#stg'); G.innerHTML = ''; const plus = document.createElement('button'); plus.className = 'c plus'; plus.innerHTML = '<svg class="ic" style="width:34px;height:34px"><use href="#i-sticker"/></svg>';
+    plus.onclick = () => { sk = {}; skDraw(); $('#cap').value = ''; $('#zm').value = 1; sheet('s'); }; G.append(plus);
+    DB.stickers().then(L => L.forEach(s => { const c = document.createElement('div'); c.className = 'c'; const im = new Image(); im.src = URL.createObjectURL(s.b); const x = document.createElement('button'); x.textContent = '✕'; x.onclick = async () => { if (confirm(t('delSt'))) { await DB.delSticker(s.id); renderStPage(); } }; c.append(im, x); G.append(c); }));
+  }
+  PG_ON.st = renderStPage;
 
   // backup
   $('#bex').onclick = async () => {
@@ -495,12 +583,8 @@
     add('🗑 ' + t('delChat'), async () => { if (!confirm(t('delChat'))) return; await DB.delChat(cur); delete S.c[cur]; delete S.g[cur]; delete M[cur]; save(); back(); });
     add(t('cancelAct'), () => {}); sheet('act');
   };
-  async function openContactInfo() {
-    const o = S.c[cur]; if (!o) return;
-    avStyle($('#cav'), o.av, (o.name || '?')[0]); $('#cin').textContent = o.name; $('#ciu').textContent = o.un ? '@' + o.un : ''; $('#cib').textContent = o.bio || ''; $('#cik').value = cur;
-    $('#secme').textContent = await C.fingerprint(ID.pub); $('#secthem').textContent = o.pk ? await C.fingerprint(C.unb64(o.pk)) : t('notVerified'); sheet('sec');
-  }
-  $('#srt').onclick = () => { const o = S.c[cur]; if (o) { delete o.pk; save(); warn(0); } sheet(0); };
+  function openContactInfo() { openProfileView(cur); }
+  $('#srt').onclick = () => { const o = S.c[viewKey]; if (o) { delete o.pk; save(); warn(0); fillView(viewKey); } };
 
   // composer
   $('#bs').onclick = () => { const x = $('#t').value.trim(); if (!x) return; sendMsg({ kind: 't', x }); $('#t').value = ''; $('#t').style.height = ''; };
@@ -534,7 +618,7 @@
       const del = () => { if (confirm(t('delSt'))) DB.delSticker(s.id).then(trayDraw); };
       im.oncontextmenu = e => { e.preventDefault(); del(); }; im.ontouchstart = () => h = setTimeout(del, 700); im.ontouchend = im.ontouchmove = () => clearTimeout(h); T.append(im); });
   }
-  async function saveSticker(b) { await DB.putSticker({ id: rid(8), ts: Date.now(), b }); trayDraw(); }
+  async function saveSticker(b) { await DB.putSticker({ id: rid(8), ts: Date.now(), b }); trayDraw(); if ($('#pg-st').classList.contains('on')) renderStPage(); }
   $('#be').onclick = async () => { await trayDraw(); $('#tray').classList.toggle('on'); };
   function skDraw() {
     const c = $('#cv'), x = c.getContext('2d'); x.clearRect(0, 0, 256, 256); if (!sk.img) return; x.save(); x.beginPath(); const r = sk.sh === 'c' ? 128 : sk.sh === 'r' ? 40 : 0;
@@ -552,7 +636,7 @@
 
   // ---------- calls ----------
   const peerKey = id => String(id).replace(/^shilagram-/, '');
-  async function media(video) { return navigator.mediaDevices.getUserMedia({ audio: true, video: video ? { facingMode: 'user' } : false }); }
+  async function media(video) { const c = S.set.call; return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !!c.echo, noiseSuppression: !!c.noise, autoGainControl: !!c.agc }, video: video ? { facingMode: c.front ? 'user' : 'environment' } : false }); }
   function showCall(k, status) { $('#cnm').textContent = nmOf(k, k); $('#cst').textContent = status || ''; $('#call').classList.add('on'); }
   function setupCall(cl, k, stream, video) {
     call = { cl, stream, k }; showCall(k, t('calling'));
@@ -580,7 +664,7 @@
   // ---------- boot ----------
   function applyLang() {
     $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t));
-    $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#pb').placeholder = t('bioPh'); $('#bk').textContent = I18N.lang === 'ar' ? '→' : '←';
+    $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
   await loadBg(); applySettings(); drawMine(); applyLang(); start();
