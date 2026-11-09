@@ -1,0 +1,35 @@
+plugins { id 'com.android.application' }
+
+def runNo = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+def ksFile = System.getenv('KS_FILE')
+
+android {
+    namespace 'app.shilagram'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'app.shilagram'
+        minSdk 26
+        targetSdk 34
+        versionCode runNo + 100
+        versionName '2.0.' + runNo
+    }
+    signingConfigs {
+        release {
+            if (ksFile) {
+                storeFile file(ksFile)
+                storePassword System.getenv('KS_PASS')
+                keyAlias System.getenv('KS_ALIAS')
+                keyPassword System.getenv('KS_PASS')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Without the keystore secrets we fall back to the debug key so the build still succeeds.
+            signingConfig ksFile ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies { implementation 'androidx.webkit:webkit:1.11.0' }

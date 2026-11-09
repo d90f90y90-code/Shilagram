@@ -1,276 +1,49 @@
 name: Build APK
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
 jobs:
-  build:
+  test:
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: JS syntax check
+        run: for f in app/src/main/assets/{app,crypto,db,i18n}.js; do node --check "$f"; done
+      - name: Verify vendored libraries
+        run: sha256sum -c app/src/main/assets/LIBS.sha256
+      - name: Crypto tests
+        run: node --test tests/crypto.test.js
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.7 }
-      - name: Create project
+      - name: Signing key (stable key from repository secrets, if configured)
+        env:
+          KS_B64: ${{ secrets.SHILA_KS_B64 }}
         run: |
-          set -e
-          mkdir -p shilagram && cd shilagram
-          cat > settings.gradle <<'QAREEB_EOF'
-          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
-          rootProject.name = "Shilagram"
-          include ':app'
-          QAREEB_EOF
-          cat > build.gradle <<'QAREEB_EOF'
-          plugins { id 'com.android.application' version '8.5.2' apply false }
-          QAREEB_EOF
-          cat > gradle.properties <<'QAREEB_EOF'
-          android.useAndroidX=true
-          org.gradle.jvmargs=-Xmx2g
-          QAREEB_EOF
-          mkdir -p app
-          cat > app/build.gradle <<'QAREEB_EOF'
-          plugins { id 'com.android.application' }
-          android {
-              namespace 'app.shilagram'
-              compileSdk 34
-              defaultConfig {
-                  applicationId 'app.shilagram'
-                  minSdk 26
-                  targetSdk 34
-                  versionCode 1
-                  versionName '1.0'
-              }
-              compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
-          }
-          dependencies { implementation 'androidx.webkit:webkit:1.11.0' }
-          QAREEB_EOF
-          mkdir -p app/src/main
-          cat > app/src/main/AndroidManifest.xml <<'QAREEB_EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-              <application android:label="Shilagram" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:supportsRtl="true"
-                  android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
-                  <activity android:name=".MainActivity" android:exported="true"
-                      android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
-                      android:windowSoftInputMode="adjustResize">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          QAREEB_EOF
-          mkdir -p app/src/main/java/app/shilagram
-          cat > app/src/main/java/app/shilagram/MainActivity.java <<'QAREEB_EOF'
-          package app.shilagram;
-
-          import android.app.Activity;
-          import android.app.AlertDialog;
-          import android.graphics.Color;
-          import android.content.Intent;
-          import android.net.Uri;
-          import android.os.Bundle;
-          import android.webkit.*;
-          import android.widget.EditText;
-          import androidx.webkit.WebViewAssetLoader;
-
-          public class MainActivity extends Activity {
-              WebView web;
-              ValueCallback<Uri[]> fcb;
-
-              @Override protected void onCreate(Bundle b) {
-                  super.onCreate(b);
-                  getWindow().setStatusBarColor(Color.parseColor("#142139"));
-                  web = new WebView(this);
-                  setContentView(web);
-                  WebSettings s = web.getSettings();
-                  s.setJavaScriptEnabled(true);
-                  s.setDomStorageEnabled(true);
-                  final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
-                      .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this)).build();
-                  web.setWebViewClient(new WebViewClient() {
-                      @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
-                          return loader.shouldInterceptRequest(r.getUrl());
-                      }
-                  });
-                  web.setWebChromeClient(new WebChromeClient() {
-                      @Override public boolean onJsPrompt(WebView v, String url, String msg, String def, final JsPromptResult res) {
-                          final EditText et = new EditText(MainActivity.this);
-                          et.setText(def);
-                          new AlertDialog.Builder(MainActivity.this).setMessage(msg).setView(et)
-                              .setPositiveButton("حسنا", (d, i) -> res.confirm(et.getText().toString()))
-                              .setNegativeButton("إلغاء", (d, i) -> res.cancel())
-                              .setOnCancelListener(d -> res.cancel()).show();
-                          return true;
-                      }
-                      @Override public boolean onShowFileChooser(WebView w, ValueCallback<Uri[]> cb, FileChooserParams p) {
-                          if (fcb != null) fcb.onReceiveValue(null);
-                          fcb = cb;
-                          try { startActivityForResult(p.createIntent(), 1); } catch (Exception e) { fcb = null; return false; }
-                          return true;
-                      }
-                      @Override public boolean onJsAlert(WebView v, String url, String msg, final JsResult res) {
-                          new AlertDialog.Builder(MainActivity.this).setMessage(msg)
-                              .setPositiveButton("حسنا", (d, i) -> res.confirm())
-                              .setOnCancelListener(d -> res.confirm()).show();
-                          return true;
-                      }
-                  });
-                  web.loadUrl("https://appassets.androidplatform.net/assets/index.html");
-              }
-
-              @Override public void onBackPressed() {
-                  web.evaluateJavascript("(function(){var s=document.querySelector('#sh.on');if(s){document.querySelector('#cl').click();return 1}"
-                      + "if(document.querySelector('#chat.on')){document.querySelector('#back').click();return 1}return 0})()",
-                      v -> { if (!"1".equals(v)) finish(); });
-              }
-
-              @Override protected void onActivityResult(int rq, int rs, Intent d) {
-                  if (rq == 1 && fcb != null) { fcb.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(rs, d)); fcb = null; }
-              }
-          }
-          QAREEB_EOF
-          mkdir -p app/src/main/assets
-          cat > app/src/main/assets/index.html <<'QAREEB_EOF'
-          <!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Shilagram</title>
-          <style>
-          :root{--hd:#142139;--pri:#2a8fd4;--bg:#fff;--bg2:#eef2f6;--ink:#0f172a;--mut:#64748b;--out:#dcf1ff;--in:#fff;--chat:#dde7ef;--ln:#e2e8f0}
-          @media(prefers-color-scheme:dark){:root{--bg:#17212b;--bg2:#0e1621;--ink:#e8eef4;--mut:#7f91a4;--out:#2b5278;--in:#182533;--chat:#0e1621;--ln:#243447}}
-          *{box-sizing:border-box}html,body{height:100%;margin:0}body{font-family:system-ui,sans-serif;background:var(--bg2);color:var(--ink)}
-          button{font:inherit;border:0;cursor:pointer}#app{height:100%;max-width:520px;margin:0 auto;background:var(--bg);position:relative;overflow:hidden}
-          .v{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg)}#chat{background:var(--chat);transform:translateX(-100%);transition:.2s}#chat.on{transform:none}
-          header{background:var(--hd);color:#fff;display:flex;align-items:center;gap:8px;padding:10px 12px;min-height:56px}header h1{flex:1;margin:0;font-size:18px}header small{display:block;font-size:12px;opacity:.75;font-weight:400}
-          .ib{background:none;color:#fff;font-size:21px;padding:4px 7px}.logo{width:26px;height:26px;vertical-align:middle;margin-inline-end:6px}
-          #list{flex:1;overflow:auto}.row{display:flex;gap:12px;padding:10px 14px;align-items:center;border-bottom:1px solid var(--ln)}
-          .av{width:46px;height:46px;border-radius:50%;background:var(--pri);color:#fff;display:grid;place-items:center;font-weight:700;font-size:19px;flex:none;position:relative}.av.on::after{content:"";position:absolute;bottom:0;inset-inline-start:0;width:12px;height:12px;border-radius:50%;background:#22c55e;border:2px solid var(--bg)}
-          .mid{flex:1;min-width:0}.mid span{color:var(--mut);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}.meta{text-align:end;font-size:12px;color:var(--mut)}.bd{background:var(--pri);color:#fff;border-radius:10px;padding:1px 7px;display:inline-block}
-          .empty{padding:48px 24px;text-align:center;color:var(--mut);line-height:1.9}#bn{background:#b45309;color:#fff;font-size:13px;padding:5px;text-align:center;display:none}
-          #ms{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:4px}.b{max-width:80%;padding:6px 10px 4px;border-radius:14px;background:var(--in);white-space:pre-wrap;word-break:break-word;align-self:flex-start;border-end-start-radius:4px}.b.me{align-self:flex-end;background:var(--out);border-end-start-radius:14px;border-end-end-radius:4px}
-          .b b{display:block;font-size:12px;color:var(--pri)}.b i{display:block;font-style:normal;font-size:11px;color:var(--mut);text-align:end}.b.st{background:none;padding:2px}.b img{width:140px;height:140px;display:block}
-          .bar{display:flex;gap:6px;padding:8px;background:var(--bg);align-items:flex-end}.bar textarea{flex:1;font:inherit;border:1px solid var(--ln);border-radius:20px;padding:9px 14px;background:var(--bg2);color:var(--ink);resize:none;max-height:100px;outline:none}
-          .sd{width:42px;height:42px;border-radius:50%;background:var(--pri);color:#fff;font-size:19px;flex:none}.em{background:none;font-size:26px;width:38px;height:42px;flex:none}
-          #tray{display:none;background:var(--bg);border-top:1px solid var(--ln);padding:8px;max-height:190px;overflow:auto;grid-template-columns:repeat(4,1fr);gap:8px}#tray.on{display:grid}#tray img,#tray button{width:100%;aspect-ratio:1;object-fit:contain;border-radius:8px}#tray button{background:var(--bg2);font-size:30px;color:var(--pri)}
-          .fab{position:absolute;bottom:20px;inset-inline-start:20px;width:54px;height:54px;border-radius:50%;background:var(--pri);color:#fff;font-size:26px;box-shadow:0 4px 12px #0004}
-          #sh{position:absolute;inset:0;background:#0007;display:none;align-items:flex-end;z-index:5}#sh.on{display:flex}.card{background:var(--bg);width:100%;max-height:92%;overflow:auto;border-radius:18px 18px 0 0;padding:16px}.card h2{margin:0 0 8px;font-size:18px}.card p{color:var(--mut);font-size:14px;line-height:1.7;margin:4px 0 8px}.pn{display:none}.pn.on{display:block}
-          .card input[type=text],.card input:not([type]){width:100%;font:inherit;border:1px solid var(--ln);border-radius:10px;padding:10px;background:var(--bg2);color:var(--ink);margin:6px 0}.k{letter-spacing:3px;text-align:center;direction:ltr;font-size:20px;font-weight:700}
-          .btn{background:var(--pri);color:#fff;border-radius:10px;padding:11px;width:100%;margin-top:6px}.btn.s{background:var(--bg2);color:var(--ink)}.chk{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--ln)}
-          #cv{width:256px;height:256px;display:block;margin:8px auto;background:repeating-conic-gradient(#8883 0 25%,#0000 0 50%) 0/20px 20px;border-radius:8px;touch-action:none}.sh{display:flex;gap:6px}.sh button{flex:1}
-          </style></head><body><div id="app">
-          <div class="v" id="home"><header><h1 id="ttl"><svg class="logo" viewBox="0 0 1120 1130"><path fill="#fff" d="M95 65L990 466 122 664 289 342zM155 681L1024 482 857 804 1050 1082z"/></svg>Shilagram<small id="mk"></small></h1><button class="ib" id="bf">🔍</button><button class="ib" id="bg">👥</button></header><div id="bn"></div><div id="list"></div></div>
-          <div class="v" id="chat"><header><button class="ib" id="bk">→</button><div class="av" id="ca" style="width:36px;height:36px;font-size:15px"></div><h1><span id="cn"></span><small id="cs"></small></h1><button class="ib" id="bd">🗑</button></header><div id="ms"></div><div id="tray"></div><div class="bar"><button class="em" id="be">😊</button><textarea id="t" rows="1" placeholder="اكتب رسالة"></textarea><button class="sd" id="bs">➤</button></div></div>
-          <div id="sh"><div class="card">
-          <div class="pn" id="p-me"><h2>ملفي</h2><p>مفتاحك السري. أعطه لأصدقائك ليجدوك به:</p><input class="k" id="mkk" readonly><button class="btn s" id="cpk">نسخ المفتاح</button><input id="nn" placeholder="اسمك"><button class="btn" id="sn">حفظ الاسم</button></div>
-          <div class="pn" id="p-f"><h2>البحث عن صديق</h2><p>اكتب مفتاحه (6 أحرف كبيرة و4 أرقام). يجب أن يكون التطبيق مفتوحا عنده.</p><input class="k" id="fk" maxlength="10" placeholder="ABCDEF1234"><p id="fs"></p><button class="btn" id="fg">بحث</button><button class="btn s" id="fa" hidden>إضافة على أي حال</button></div>
-          <div class="pn" id="p-g"><h2>مجموعة جديدة</h2><input id="gn" placeholder="اسم المجموعة"><div id="gl"></div><button class="btn" id="gc">إنشاء</button></div>
-          <div class="pn" id="p-s"><h2>صنع ملصق</h2><button class="btn s" id="pk">اختيار صورة من الهاتف</button><input type="file" id="fl" accept="image/*" hidden><canvas id="cv" width="256" height="256"></canvas><input type="range" id="zm" min="1" max="3" step=".05" value="1" style="width:100%"><div class="sh"><button class="btn s" data-s="s">مربع</button><button class="btn s" data-s="r">مدور</button><button class="btn s" data-s="c">دائرة</button></div><input id="cap" placeholder="نص على الملصق (اختياري)"><button class="btn" id="ss">حفظ الملصق</button></div>
-          <button class="btn s" id="x" style="margin-top:12px">إغلاق</button></div></div></div>
-          <script src="peerjs.min.js"></script>
-          <script>
-          const $=s=>document.querySelector(s),rid=n=>Math.random().toString(36).slice(2,2+n),R=n=>crypto.getRandomValues(new Uint32Array(1))[0]%n;
-          let S={me:null,c:{},g:{}},ST=[],conns={},cur=null,srch=null,peer=null,sk={};
-          try{S=JSON.parse(localStorage.getItem('shila'))||S;ST=JSON.parse(localStorage.getItem('shila_st'))||[]}catch(e){}
-          const save=()=>{try{[...Object.values(S.c),...Object.values(S.g)].forEach(o=>{if(o.m.length>300)o.m=o.m.slice(-300)});localStorage.setItem('shila',JSON.stringify(S))}catch(e){}};
-          const saveST=()=>{try{localStorage.setItem('shila_st',JSON.stringify(ST));return 1}catch(e){alert('الذاكرة ممتلئة');ST.shift();return 0}};
-          if(!S.me){let k='';for(let i=0;i<6;i++)k+=String.fromCharCode(65+R(26));for(let i=0;i<4;i++)k+=R(10);S.me={key:k,name:(prompt('ما اسمك؟')||'').trim()||'مستخدم'};save()}
-          const ch=id=>S.c[id]||S.g[id],isG=id=>!!S.g[id],on=k=>conns[k]&&conns[k].open,tm=t=>new Date(t).toLocaleTimeString('ar',{hour:'2-digit',minute:'2-digit'});
-          const members=id=>isG(id)?Object.keys(S.g[id].mem).filter(k=>k!==S.me.key):[id];
-          const nmOf=(id,f)=>f===S.me.key?S.me.name:(S.c[f]&&S.c[f].name)||(S.g[id]&&S.g[id].mem[f])||f;
-          const banner=t=>{$('#bn').style.display=t?'block':'none';$('#bn').textContent=t||''};
-          function tx(k,o){try{conns[k].send(o);return 1}catch(e){return 0}}
-          function pack(id,m){const o={t:'m',i:m.i,ts:m.ts,x:m.x,s:m.s};if(isG(id))o.g=id;return o}
-          function flush(id,m){members(id).forEach(k=>{if(m.p.includes(k)){if(on(k)&&tx(k,pack(id,m)))m.sent=1;else connect(k)}})}
-          function send(x,s){if(!cur||(!x&&!s))return;const id=cur,m={i:rid(8),me:1,f:S.me.key,ts:Date.now(),p:members(id),x,s};ch(id).m.push(m);flush(id,m);save();draw();list()}
-          function connect(k){if(!peer||peer.disconnected||k===S.me.key||on(k)||(conns[k]&&conns[k].pend>Date.now()))return;const c=peer.connect('shilagram-'+k,{reliable:true});c.want=k;c.pend=Date.now()+15000;conns[k]=c;wire(c)}
-          function wire(c){c.on('open',()=>c.send({t:'hi',k:S.me.key,n:S.me.name}));c.on('data',d=>data(c,d));const g=()=>{const k=c.key||c.want;if(k&&conns[k]===c){delete conns[k];list();if(cur)draw()}};c.on('close',g);c.on('error',g)}
-          function hi(c,d){const k=d.k;if(!/^[A-Z]{6}\d{4}$/.test(k)||k===S.me.key)return c.close();const n=String(d.n||k).slice(0,30);c.key=k;conns[k]=c;
-           if(!S.c[k])S.c[k]={name:n,m:[],u:0};else S.c[k].name=n;
-           Object.entries(S.g).forEach(([id,g])=>{if(g.mem[k])tx(k,{t:'g',id,n:g.name,mem:g.mem})});
-           [k,...Object.keys(S.g).filter(id=>S.g[id].mem[k])].forEach(id=>ch(id).m.forEach(m=>{if(m.me&&m.p.includes(k))flush(id,m)}));
-           if(srch&&srch.key===k){clearTimeout(srch.t);srch=null;sheet(0);open(k)}save();list();if(cur)draw()}
-          function data(c,d){if(!d)return;if(d.t==='hi')return hi(c,d);const k=c.key;if(!k)return;
-           if(d.t==='g'){if(!d.mem||!d.mem[k])return;const g=S.g[d.id]||{m:[],u:0};g.name=String(d.n).slice(0,40);g.mem=d.mem;S.g[d.id]=g;Object.keys(g.mem).forEach(connect);save();list()}
-           else if(d.t==='m'){const id=d.g||k,o=ch(id);if(!o||(d.g&&!o.mem[k]))return;if(!o.m.some(m=>m.i===d.i)){o.m.push({i:d.i,f:k,ts:d.ts,x:d.x,s:d.s});if(cur!==id)o.u++}tx(k,{t:'a',i:d.i,g:d.g});save();list();if(cur===id)draw()}
-           else if(d.t==='a'){const o=ch(d.g||k),m=o&&o.m.find(m=>m.i===d.i);if(m&&m.p){m.p=m.p.filter(x=>x!==k);save();if(cur)draw()}}}
-          function start(){banner('جاري الاتصال…');try{peer=new Peer('shilagram-'+S.me.key)}catch(e){return banner('تعذر تحميل مكتبة الاتصال')}
-           peer.on('open',()=>{banner(0);poll()});peer.on('connection',wire);
-           peer.on('disconnected',()=>{banner('انقطع الاتصال بالخادم…');setTimeout(()=>{try{peer.reconnect()}catch(e){}},3000)});
-           peer.on('error',e=>{const m=/shilagram-([A-Z]{6}\d{4})/.exec(e.message||'');if(e.type==='peer-unavailable'&&m){if(srch&&srch.key===m[1])nf();return}
-            if(['unavailable-id','network','server-error','socket-error','socket-closed'].includes(e.type)){banner(e.type==='unavailable-id'?'مفتاحك مفتوح في جهاز آخر':'لا يوجد اتصال بالإنترنت');try{peer.destroy()}catch(x){}setTimeout(start,6000)}})}
-          function poll(){const ks=new Set(Object.keys(S.c));Object.values(S.g).forEach(g=>Object.keys(g.mem).forEach(k=>ks.add(k)));ks.forEach(connect)}
-          setInterval(()=>{if(peer&&!peer.disconnected)poll()},20000);
-          function list(){$('#mk').textContent='مفتاحي: '+S.me.key;const L=$('#list');L.innerHTML='';
-           const rows=[...Object.entries(S.c).map(([id,o])=>[id,o,0]),...Object.entries(S.g).map(([id,o])=>[id,o,1])].sort((a,b)=>lt(b[1])-lt(a[1]));
-           if(!rows.length)L.innerHTML='<div class="empty">لا توجد محادثات.<br>اضغط 🔍 للبحث عن صديق بمفتاحه، أو 👥 لإنشاء مجموعة.</div>';
-           rows.forEach(([id,o,g])=>{const l=o.m[o.m.length-1],r=document.createElement('div');r.className='row';
-            r.innerHTML='<div class="av'+(!g&&on(id)?' on':'')+'"></div><div class="mid"><b></b><span></span></div><div class="meta"><div></div></div>';
-            r.children[0].textContent=g?'👥':o.name[0];r.querySelector('b').textContent=o.name;
-            r.querySelector('span').textContent=l?(l.s?'🖼 ملصق':l.x):(g?Object.keys(o.mem).length+' أعضاء':on(id)?'متصل':'غير متصل');
-            r.querySelector('.meta div').textContent=l?tm(l.ts):'';if(o.u){const b=document.createElement('span');b.className='bd';b.textContent=o.u;r.lastChild.append(b)}
-            r.onclick=()=>open(id);L.append(r)})}
-          const lt=o=>o.m.length?o.m[o.m.length-1].ts:0;
-          function open(id){cur=id;ch(id).u=0;save();$('#chat').classList.add('on');$('#tray').classList.remove('on');draw();list()}
-          function draw(){const o=ch(cur);if(!o)return;$('#cn').textContent=o.name;$('#ca').textContent=isG(cur)?'👥':o.name[0];
-           $('#cs').textContent=isG(cur)?Object.values(o.mem).join('، '):on(cur)?'متصل الآن':'غير متصل';const M=$('#ms');M.innerHTML='';
-           o.m.forEach(m=>{const b=document.createElement('div');b.className='b'+(m.me?' me':'')+(m.s?' st':'');
-            if(isG(cur)&&!m.me){const n=document.createElement('b');n.textContent=nmOf(cur,m.f);b.append(n)}
-            if(m.s){const im=new Image();im.src=m.s;if(!m.me)im.onclick=()=>{if(!ST.includes(m.s)&&confirm('حفظ الملصق في مجموعتك؟')){ST.unshift(m.s);saveST();trayDraw()}};b.append(im)}else{const t=document.createElement('span');t.textContent=m.x;b.append(t)}
-            const i=document.createElement('i');i.textContent=tm(m.ts)+(m.me?(m.p&&!m.p.length?' ✓✓':m.sent?' ✓':' ⏱'):'');b.append(i);M.append(b)});M.scrollTop=M.scrollHeight}
-          function sheet(n){$('#sh').classList.toggle('on',!!n);document.querySelectorAll('.pn').forEach(p=>p.classList.toggle('on',p.id==='p-'+n))}
-          function nf(){clearTimeout(srch.t);$('#fs').textContent='لم يتم العثور عليه الآن. ربما التطبيق مغلق عنده.';$('#fa').hidden=0;$('#fg').disabled=0}
-          $('#bf').onclick=()=>{$('#fk').value='';$('#fs').textContent='';$('#fa').hidden=1;$('#fg').disabled=0;sheet('f')};
-          $('#fk').oninput=e=>e.target.value=e.target.value.toUpperCase();
-          $('#fg').onclick=()=>{const k=$('#fk').value.trim().toUpperCase();$('#fa').hidden=1;
-           if(!/^[A-Z]{6}\d{4}$/.test(k))return $('#fs').textContent='المفتاح غير صحيح';if(k===S.me.key)return $('#fs').textContent='هذا مفتاحك أنت';
-           if(S.c[k]){sheet(0);return open(k)}if(!peer||peer.disconnected)return $('#fs').textContent='لا يوجد اتصال بالإنترنت';
-           $('#fs').textContent='جاري البحث…';$('#fg').disabled=1;srch={key:k,t:setTimeout(()=>srch&&nf(),12000)};connect(k)};
-          $('#fa').onclick=()=>{const k=srch&&srch.key||$('#fk').value.trim().toUpperCase();if(!S.c[k])S.c[k]={name:k,m:[],u:0};save();srch=null;sheet(0);open(k)};
-          $('#bg').onclick=()=>{$('#gn').value='';const L=$('#gl');L.innerHTML=Object.keys(S.c).length?'':'<p>أضف أصدقاء أولا.</p>';
-           Object.entries(S.c).forEach(([k,o])=>{const d=document.createElement('label');d.className='chk';d.innerHTML='<input type="checkbox" value="'+k+'"><span></span>';d.lastChild.textContent=o.name;L.append(d)});sheet('g')};
-          $('#gc').onclick=()=>{const ks=[...document.querySelectorAll('#gl input:checked')].map(i=>i.value),n=$('#gn').value.trim();if(!n||!ks.length)return alert('اكتب اسما واختر عضوا واحدا على الأقل');
-           const id='g'+rid(8),mem={[S.me.key]:S.me.name};ks.forEach(k=>mem[k]=S.c[k].name);S.g[id]={name:n,mem,m:[],u:0};ks.forEach(k=>on(k)?tx(k,{t:'g',id,n,mem}):connect(k));save();sheet(0);open(id)};
-          $('#ttl').onclick=()=>{$('#mkk').value=S.me.key;$('#nn').value=S.me.name;sheet('me')};
-          $('#cpk').onclick=()=>{$('#mkk').select();try{navigator.clipboard.writeText(S.me.key)}catch(e){document.execCommand('copy')}$('#cpk').textContent='تم النسخ'};
-          $('#sn').onclick=()=>{const n=$('#nn').value.trim();if(n){S.me.name=n;save();sheet(0)}};$('#x').onclick=()=>sheet(0);
-          $('#bk').onclick=()=>{cur=null;$('#chat').classList.remove('on');list()};
-          $('#bd').onclick=()=>{if(confirm('حذف هذه المحادثة من جهازك؟')){delete S.c[cur];delete S.g[cur];save();$('#bk').click()}};
-          $('#bs').onclick=()=>{const t=$('#t');send(t.value.trim());t.value='';t.style.height=''};
-          $('#t').oninput=e=>{e.target.style.height='auto';e.target.style.height=e.target.scrollHeight+'px'};
-          $('#be').onclick=()=>{trayDraw();$('#tray').classList.toggle('on')};
-          function trayDraw(){const T=$('#tray');T.innerHTML='';const a=document.createElement('button');a.textContent='+';a.onclick=()=>{sk={};skDraw();$('#cap').value='';$('#zm').value=1;sheet('s')};T.append(a);
-           ST.forEach(s=>{const im=new Image();im.src=s;let h;im.onclick=()=>{send(0,s);T.classList.remove('on')};im.oncontextmenu=e=>{e.preventDefault();if(confirm('حذف الملصق؟')){ST=ST.filter(x=>x!==s);saveST();trayDraw()}};
-            im.ontouchstart=()=>h=setTimeout(()=>im.oncontextmenu({preventDefault(){}}),700);im.ontouchend=im.ontouchmove=()=>clearTimeout(h);T.append(im)})}
-          function skDraw(){const c=$('#cv'),x=c.getContext('2d');x.clearRect(0,0,256,256);if(!sk.img)return;x.save();x.beginPath();const r=sk.sh==='c'?128:sk.sh==='r'?40:0;x.roundRect?x.roundRect(0,0,256,256,r):x.rect(0,0,256,256);x.clip();
-           const s=Math.max(256/sk.img.width,256/sk.img.height)*sk.z,w=sk.img.width*s,h=sk.img.height*s;x.drawImage(sk.img,128-w/2+sk.ox,128-h/2+sk.oy,w,h);x.restore();
-           const t=$('#cap').value;if(t){x.font='bold 30px sans-serif';x.textAlign='center';x.lineWidth=6;x.strokeStyle='#000';x.fillStyle='#fff';x.strokeText(t,128,240,240);x.fillText(t,128,240,240)}}
-          $('#pk').onclick=()=>$('#fl').click();
-          $('#fl').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=()=>{sk={img:im,z:1,ox:0,oy:0,sh:'r'};$('#zm').value=1;skDraw()};im.src=URL.createObjectURL(f);e.target.value=''};
-          $('#zm').oninput=e=>{sk.z=+e.target.value;skDraw()};$('#cap').oninput=skDraw;
-          document.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>{sk.sh=b.dataset.s;skDraw()});
-          let pd;$('#cv').onpointerdown=e=>{pd=[e.clientX,e.clientY];e.target.setPointerCapture(e.pointerId)};$('#cv').onpointerup=()=>pd=0;
-          $('#cv').onpointermove=e=>{if(!pd||!sk.img)return;sk.ox+=e.clientX-pd[0];sk.oy+=e.clientY-pd[1];pd=[e.clientX,e.clientY];skDraw()};
-          $('#ss').onclick=()=>{if(!sk.img)return alert('اختر صورة أولا');let u=$('#cv').toDataURL('image/webp',.85);if(!u.startsWith('data:image/webp'))u=$('#cv').toDataURL('image/png');ST.unshift(u);if(saveST()){trayDraw();sheet(0);$('#tray').classList.add('on')}};
-          list();start();
-          </script></body></html>
-          QAREEB_EOF
-          mkdir -p app/src/main/res/drawable
-          cat > app/src/main/res/drawable/ic_fg.xml <<'QAREEB_EOF'
-          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108"><path android:fillColor="#142139" android:pathData="M28.65,27.00 L76.17,48.29 L30.08,58.81 L38.95,41.71 Z M31.83,59.71 L77.97,49.14 L69.11,66.24 L79.35,81.00 Z"/></vector>
-          QAREEB_EOF
-          mkdir -p app/src/main/res/values
-          cat > app/src/main/res/values/ic.xml <<'QAREEB_EOF'
-          <resources><color name="ic_bg">#FFFFFF</color></resources>
-          QAREEB_EOF
-          mkdir -p app/src/main/res/mipmap-anydpi-v26
-          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'QAREEB_EOF'
-          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/ic_bg"/><foreground android:drawable="@drawable/ic_fg"/><monochrome android:drawable="@drawable/ic_fg"/></adaptive-icon>
-          QAREEB_EOF
-      - name: Download PeerJS
-        run: curl -fsSL https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js -o shilagram/app/src/main/assets/peerjs.min.js
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/shila.jks"
+            echo "KS_FILE=$RUNNER_TEMP/shila.jks" >> "$GITHUB_ENV"
+            echo "KS_ALIAS=shila" >> "$GITHUB_ENV"
+          else
+            echo "::warning::SHILA_KS_B64 secret missing - APK is signed with a throwaway debug key and cannot update an installed copy"
+          fi
       - name: Build
-        working-directory: shilagram
-        run: gradle assembleDebug
+        env:
+          KS_PASS: ${{ secrets.SHILA_KS_PASS }}
+        run: gradle assembleRelease
       - uses: actions/upload-artifact@v4
         with:
           name: shilagram-apk
-          path: shilagram/app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/release/app-release.apk

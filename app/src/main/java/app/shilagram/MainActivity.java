@@ -1,0 +1,157 @@
+package app.shilagram;
+
+import android.Manifest;
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.provider.Settings;
+import android.util.Base64;
+import android.webkit.*;
+import android.widget.EditText;
+import android.widget.Toast;
+import androidx.webkit.WebViewAssetLoader;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+
+public class MainActivity extends Activity {
+    static final String HOST = "appassets.androidplatform.net";
+    static final int RQ_FILE = 1, RQ_SAVE = 2, RQ_PERM = 3, RQ_NOTIF = 4;
+    WebView web;
+    ValueCallback<Uri[]> fcb;
+    PermissionRequest pendingPerm;
+    byte[] pendData;
+    int notifId = 100;
+
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        getWindow().setStatusBarColor(Color.parseColor("#142139"));
+        web = new WebView(this);
+        setContentView(web);
+        WebSettings s = web.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setAllowFileAccess(false);
+        final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this)).build();
+        web.setWebViewClient(new WebViewClient() {
+            @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                return loader.shouldInterceptRequest(r.getUrl());
+            }
+            @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                return !HOST.equals(r.getUrl().getHost()); // never navigate away from the app
+            }
+        });
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onJsPrompt(WebView v, String url, String msg, String def, final JsPromptResult res) {
+                final EditText et = new EditText(MainActivity.this);
+                et.setText(def);
+                new AlertDialog.Builder(MainActivity.this).setMessage(msg).setView(et)
+                    .setPositiveButton(android.R.string.ok, (d, i) -> res.confirm(et.getText().toString()))
+                    .setNegativeButton(android.R.string.cancel, (d, i) -> res.cancel())
+                    .setOnCancelListener(d -> res.cancel()).show();
+                return true;
+            }
+            @Override public boolean onJsConfirm(WebView v, String url, String msg, final JsResult res) {
+                new AlertDialog.Builder(MainActivity.this).setMessage(msg)
+                    .setPositiveButton(android.R.string.ok, (d, i) -> res.confirm())
+                    .setNegativeButton(android.R.string.cancel, (d, i) -> res.cancel())
+                    .setOnCancelListener(d -> res.cancel()).show();
+                return true;
+            }
+            @Override public boolean onJsAlert(WebView v, String url, String msg, final JsResult res) {
+                new AlertDialog.Builder(MainActivity.this).setMessage(msg)
+                    .setPositiveButton(android.R.string.ok, (d, i) -> res.confirm())
+                    .setOnCancelListener(d -> res.confirm()).show();
+                return true;
+            }
+            @Override public boolean onShowFileChooser(WebView w, ValueCallback<Uri[]> cb, FileChooserParams p) {
+                if (fcb != null) fcb.onReceiveValue(null);
+                fcb = cb;
+                try { startActivityForResult(p.createIntent(), RQ_FILE); } catch (Exception e) { fcb = null; return false; }
+                return true;
+            }
+            @Override public void onPermissionRequest(final PermissionRequest r) {
+                runOnUiThread(() -> {
+                    if (!HOST.equals(r.getOrigin().getHost())) { r.deny(); return; }
+                    if (pendingPerm != null) pendingPerm.deny();
+                    List<String> missing = new ArrayList<>();
+                    for (String res : r.getResources()) {
+                        String p = PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res) ? Manifest.permission.RECORD_AUDIO
+                                 : PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res) ? Manifest.permission.CAMERA : null;
+                        if (p != null && checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) missing.add(p);
+                    }
+                    if (missing.isEmpty()) r.grant(r.getResources());
+                    else { pendingPerm = r; requestPermissions(missing.toArray(new String[0]), RQ_PERM); }
+                });
+            }
+        });
+        web.addJavascriptInterface(new Bridge(), "Android");
+        NotificationChannel ch = new NotificationChannel("msgs", "Messages", NotificationManager.IMPORTANCE_HIGH);
+        getSystemService(NotificationManager.class).createNotificationChannel(ch);
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, RQ_NOTIF);
+        try { startForegroundService(new Intent(this, KeepAliveService.class)); } catch (Exception e) { /* background start restrictions */ }
+        web.loadUrl("https://" + HOST + "/assets/index.html");
+    }
+
+    class Bridge {
+        @JavascriptInterface public void notify(String title, String text) {
+            Intent in = new Intent(MainActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            PendingIntent pi = PendingIntent.getActivity(MainActivity.this, 0, in, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            android.app.Notification n = new android.app.Notification.Builder(MainActivity.this, "msgs").setSmallIcon(R.drawable.ic_fg)
+                .setContentTitle(title).setContentText(text).setContentIntent(pi).setAutoCancel(true).build();
+            getSystemService(NotificationManager.class).notify(notifId++ % 1000 + 100, n);
+        }
+        @JavascriptInterface public void exportFile(final String name, final String mime, String b64) {
+            pendData = Base64.decode(b64, Base64.DEFAULT);
+            final String m = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
+            runOnUiThread(() -> {
+                Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(m).putExtra(Intent.EXTRA_TITLE, name);
+                try { startActivityForResult(i, RQ_SAVE); } catch (Exception e) { pendData = null; }
+            });
+        }
+        @JavascriptInterface public void batterySettings() {
+            runOnUiThread(() -> { try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); } catch (Exception e) { } });
+        }
+    }
+
+    @Override public void onBackPressed() {
+        web.evaluateJavascript("(function(){return window.__back?window.__back():0})()", v -> { if (!"1".equals(v)) finish(); });
+    }
+
+    @Override protected void onActivityResult(int rq, int rs, Intent d) {
+        if (rq == RQ_FILE && fcb != null) { fcb.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(rs, d)); fcb = null; }
+        else if (rq == RQ_SAVE && pendData != null) {
+            if (rs == RESULT_OK && d != null && d.getData() != null) {
+                try (OutputStream o = getContentResolver().openOutputStream(d.getData())) { o.write(pendData); Toast.makeText(this, "✓", Toast.LENGTH_SHORT).show(); }
+                catch (Exception e) { Toast.makeText(this, "✗", Toast.LENGTH_SHORT).show(); }
+            }
+            pendData = null;
+        }
+    }
+
+    @Override public void onRequestPermissionsResult(int rq, String[] perms, int[] res) {
+        if (rq == RQ_PERM && pendingPerm != null) {
+            boolean ok = res.length > 0;
+            for (int g : res) if (g != PackageManager.PERMISSION_GRANTED) ok = false;
+            if (ok) pendingPerm.grant(pendingPerm.getResources()); else pendingPerm.deny();
+            pendingPerm = null;
+        }
+    }
+
+    @Override protected void onDestroy() {
+        stopService(new Intent(this, KeepAliveService.class));
+        web.destroy();
+        super.onDestroy();
+    }
+}
