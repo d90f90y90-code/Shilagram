@@ -21,6 +21,15 @@
       security: 'الأمان', secP: 'قارن هذه البصمة مع صديقك (بمكالمة أو لقاء) للتأكد أن لا أحد ينتحل شخصيته.', theirPrint: 'بصمة صديقك', notVerified: 'لم يتصل بعد',
       resetTrust: 'إعادة الثقة بهوية جديدة', keyChanged: 'تحذير: تغيّرت هوية الأمان لـ ', keyChangedHelp: 'قد يكون صديقك غيّر جهازه، أو شخص ينتحل شخصيته. تأكد منه ثم أعد الثقة من قائمة الأمان.',
       voiceCall: 'مكالمة صوتية', videoCall: 'مكالمة فيديو', incoming: 'مكالمة واردة من ', accept: 'رد', decline: 'رفض', hangup: 'إنهاء', mute: 'كتم', calling: 'جاري الاتصال…', callFail: 'فشلت المكالمة', callNeedOnline: 'الصديق غير متصل',
+      myProfile: 'بروفايلي', username: 'اسم المستخدم', bio: 'الوصف', bioPh: 'اكتب نبذة عنك', changePhoto: 'تغيير الصورة', removePhoto: 'حذف الصورة', saveProfile: 'حفظ البروفايل',
+      userBad: 'اسم المستخدم: من 4 إلى 20 حرفا إنجليزيا أو أرقاما أو _ ويبدأ بحرف', saved: 'تم الحفظ',
+      settings: 'الإعدادات', chatBg: 'خلفية الدردشة', bgPick: 'صورة من الهاتف', bgReset: 'الافتراضية', fontSize: 'حجم خط الدردشة', preview: 'هذه معاينة لحجم الخط',
+      theme: 'المظهر', themeAuto: 'تلقائي', themeLight: 'نهاري', themeDark: 'ليلي', themeShili: 'شلي',
+      contactInfo: 'معلومات جهة الاتصال', groupInfo: 'معلومات المجموعة', groupNameLbl: 'اسم المجموعة', saveGroup: 'حفظ الاسم', addMembers: 'إضافة أعضاء', membersTitle: 'الأعضاء',
+      manager: 'المدير', assistant: 'مساعد', setTitle: 'اللقب', titleAsk: 'اكتب لقبا للعضو (اتركه فارغا للحذف):', promote: 'ترقية إلى مساعد', demote: 'إزالة صفة المساعد',
+      permSend: 'إرسال الرسائل', permMedia: 'إرسال الوسائط والملفات', permInfo: 'تعديل اسم المجموعة وصورتها', permAdd: 'إضافة أعضاء',
+      removeMember: 'إزالة من المجموعة', confirmRemove: 'إزالة هذا العضو من المجموعة؟', leaveGroup: 'مغادرة المجموعة', confirmLeave: 'مغادرة المجموعة وحذفها من جهازك؟',
+      groupLeft: 'لم تعد عضوا في هذه المجموعة', noPerm: 'ليست لديك صلاحية', memberPerms: 'صلاحيات الأعضاء العاديين', back: 'رجوع', me: 'أنا', ownerOffline: 'سيُنفَّذ طلبك عندما يتصل المدير', noMembersToAdd: 'كل أصدقائك موجودون في المجموعة', groupPhoto: 'صورة المجموعة',
       msgFrom: 'رسالة من ', secure: '🔒 مشفّرة من طرف لطرف', unsecure: 'جاري تأمين الاتصال…', done: 'تم'
     },
     en: {
@@ -43,6 +52,15 @@
       security: 'Security', secP: 'Compare this fingerprint with your friend (in a call or in person) to be sure nobody is impersonating them.', theirPrint: "Friend's fingerprint", notVerified: 'Has not connected yet',
       resetTrust: 'Trust a new identity', keyChanged: 'Warning: security identity changed for ', keyChangedHelp: 'Your friend may have changed device, or someone is impersonating them. Verify with them, then reset trust from the Security menu.',
       voiceCall: 'Voice call', videoCall: 'Video call', incoming: 'Incoming call from ', accept: 'Answer', decline: 'Decline', hangup: 'Hang up', mute: 'Mute', calling: 'Calling…', callFail: 'Call failed', callNeedOnline: 'Friend is offline',
+      myProfile: 'My profile', username: 'Username', bio: 'Bio', bioPh: 'Write something about you', changePhoto: 'Change photo', removePhoto: 'Remove photo', saveProfile: 'Save profile',
+      userBad: 'Username: 4-20 letters, digits or _ and must start with a letter', saved: 'Saved',
+      settings: 'Settings', chatBg: 'Chat background', bgPick: 'Photo from phone', bgReset: 'Default', fontSize: 'Chat font size', preview: 'This is a font size preview',
+      theme: 'Theme', themeAuto: 'Auto', themeLight: 'Light', themeDark: 'Dark', themeShili: 'Shili',
+      contactInfo: 'Contact info', groupInfo: 'Group info', groupNameLbl: 'Group name', saveGroup: 'Save name', addMembers: 'Add members', membersTitle: 'Members',
+      manager: 'Manager', assistant: 'Assistant', setTitle: 'Title', titleAsk: 'Enter a title for this member (leave empty to remove):', promote: 'Promote to assistant', demote: 'Remove assistant role',
+      permSend: 'Send messages', permMedia: 'Send media and files', permInfo: 'Edit group name and photo', permAdd: 'Add members',
+      removeMember: 'Remove from group', confirmRemove: 'Remove this member from the group?', leaveGroup: 'Leave group', confirmLeave: 'Leave the group and delete it from your device?',
+      groupLeft: 'You are no longer a member of this group', noPerm: 'You do not have permission', memberPerms: 'Ordinary member permissions', back: 'Back', me: 'Me', ownerOffline: 'Your request will be applied when the manager comes online', noMembersToAdd: 'All your friends are already in the group', groupPhoto: 'Group photo',
       msgFrom: 'Message from ', secure: '🔒 End-to-end encrypted', unsecure: 'Securing connection…', done: 'Done'
     }
   };

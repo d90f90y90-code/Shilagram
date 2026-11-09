@@ -62,6 +62,12 @@
   }
 
 
+
+  // ---- generic signatures with the identity key (used for owner-signed group state) ----
+  const gData = bytes => cat(enc.encode('shila-group-v1'), bytes);
+  async function signRaw(privJwk, bytes) { return new Uint8Array(await subtle.sign(SIG, await loadPriv(privJwk), gData(bytes))); }
+  async function verifyRaw(pubRaw, sig, bytes) { try { return await subtle.verify(SIG, await loadPub(pubRaw), sig, gData(bytes)); } catch (e) { return false; } }
+
   // ---- password-protected backup (PBKDF2 -> AES-GCM) ----
   async function pbKey(pass, salt) {
     const base = await subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
@@ -76,5 +82,5 @@
     return dec.decode(await subtle.decrypt({ name: 'AES-GCM', iv: unb64(o.i) }, await pbKey(pass, unb64(o.s)), unb64(o.d)));
   }
 
-  G.ShilaCrypto = { lock, unlock, newIdentity, fingerprint, newHello, sign, verify, deriveKey, seal, open, b64, unb64, rnd, cat };
+  G.ShilaCrypto = { signRaw, verifyRaw, lock, unlock, newIdentity, fingerprint, newHello, sign, verify, deriveKey, seal, open, b64, unb64, rnd, cat };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

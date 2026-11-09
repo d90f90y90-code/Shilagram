@@ -120,6 +120,9 @@ public class MainActivity extends Activity {
                 try { startActivityForResult(i, RQ_SAVE); } catch (Exception e) { pendData = null; }
             });
         }
+        @JavascriptInterface public void setStatusColor(final String hex) {
+            runOnUiThread(() -> { try { getWindow().setStatusBarColor(Color.parseColor(hex)); } catch (Exception e) { } });
+        }
         @JavascriptInterface public void batterySettings() {
             runOnUiThread(() -> { try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); } catch (Exception e) { } });
         }

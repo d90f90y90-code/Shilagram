@@ -1,21 +1,48 @@
 <!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Shilagram</title>
 <link rel="stylesheet" href="style.css"></head><body><div id="app">
-<div class="v" id="home"><header><h1 id="ttl"><svg class="logo" viewBox="0 0 1120 1130"><path fill="#fff" d="M95 65L990 466 122 664 289 342zM155 681L1024 482 857 804 1050 1082z"/></svg><span>Shilagram</span><small id="mk"></small></h1><button class="ib" id="bq">📷</button><button class="ib" id="bf">🔍</button><button class="ib" id="bg">👥</button></header><div id="bn"></div><div id="warn"></div><div id="list"></div></div>
-<div class="v" id="chat"><header><button class="ib" id="bk">→</button><div class="av" id="ca" style="width:36px;height:36px;font-size:15px"></div><h1><span id="cn"></span><small id="cs"></small></h1><button class="ib" id="bc1">📞</button><button class="ib" id="bc2">🎥</button><button class="ib" id="bm">⋮</button></header><div id="ms"></div><div id="rbar"><span id="rtx"></span><button id="rx">✕</button></div><div id="tray"></div>
+<div class="v" id="home"><header><div class="av" id="mav" style="width:38px;height:38px;font-size:16px;cursor:pointer"></div><h1 id="ttl"><span>Shilagram</span><small id="mk"></small></h1><button class="ib" id="bq">📷</button><button class="ib" id="bf">🔍</button><button class="ib" id="bg">👥</button><button class="ib" id="bst">⚙️</button></header><div id="bn"></div><div id="warn"></div><div id="list"></div></div>
+<div class="v" id="chat"><header><button class="ib" id="bk">→</button><div class="av" id="ca" style="width:36px;height:36px;font-size:15px"></div><h1 id="chh"><span id="cn"></span><small id="cs"></small></h1><button class="ib" id="bc1">📞</button><button class="ib" id="bc2">🎥</button><button class="ib" id="bm">⋮</button></header><div id="ms"></div><div id="rbar"><span id="rtx"></span><button id="rx">✕</button></div><div id="tray"></div>
 <div class="bar"><button class="em" id="be">😊</button><button class="em" id="ba">📎</button><textarea id="t" rows="1"></textarea><button class="em" id="bv">🎤</button><button class="sd" id="bs">➤</button></div></div>
 <div id="sh"><div class="card">
-<div class="pn" id="p-me"><h2 data-t="profile"></h2><p data-t="profileP"></p><input class="k" id="mkk" readonly><div class="two"><button class="btn s" id="cpk" data-t="copyKey"></button><button class="btn s" id="qrb" data-t="showQR"></button></div><div id="qrbox"></div>
+
+<div class="pn" id="p-me"><h2 data-t="myProfile"></h2>
+<div class="av big" id="pav"></div><div class="two"><button class="btn s" id="pph" data-t="changePhoto"></button><button class="btn s" id="prm" data-t="removePhoto"></button></div><input type="file" id="pfile" accept="image/*" hidden>
+<label data-t="yourName"></label><input id="pn" maxlength="30">
+<label data-t="username"></label><div class="un"><span>@</span><input id="pu" maxlength="20" autocapitalize="none" autocomplete="off" spellcheck="false"></div><p class="er" id="pue"></p>
+<label data-t="bio"></label><textarea class="ta2" id="pb" maxlength="140"></textarea>
+<p data-t="profileP"></p><input class="k" id="mkk" readonly><div class="two"><button class="btn s" id="cpk" data-t="copyKey"></button><button class="btn s" id="qrb" data-t="showQR"></button></div><div id="qrbox"></div>
 <p><b data-t="fingerprintMine"></b></p><div class="fp" id="myfp"></div>
-<input id="nn"><button class="btn" id="sn" data-t="saveName"></button>
-<p><b data-t="backup"></b><br><span data-t="backupP"></span></p><div class="two"><button class="btn s" id="bex" data-t="exportBtn"></button><button class="btn s" id="bim" data-t="importBtn"></button></div><input type="file" id="bfile" hidden>
-<p><b data-t="lang"></b></p><select id="lng"><option value="ar">العربية</option><option value="en">English</option></select>
-<p><b data-t="ice"></b></p><textarea class="ta" id="ice"></textarea><button class="btn s" id="icb" data-t="iceSave"></button>
+<button class="btn" id="psv" data-t="saveProfile"></button></div>
+
+<div class="pn" id="p-set"><h2 data-t="settings"></h2>
+<div class="sec" data-t="theme"></div><div class="seg" id="thm"><button data-th="auto" data-t="themeAuto"></button><button data-th="light" data-t="themeLight"></button><button data-th="dark" data-t="themeDark"></button><button data-th="shili" data-t="themeShili"></button></div>
+<div class="sec" data-t="fontSize"></div><input type="range" id="fsz" min="12" max="24" step="1" style="width:100%"><div class="prev"><div class="b me"><span data-t="preview"></span><i>12:00 ✓✓</i></div></div>
+<div class="sec" data-t="chatBg"></div><div class="sws" id="bgs"></div><input type="file" id="bgf" accept="image/*" hidden>
+<hr><div class="sec" data-t="lang"></div><select id="lng"><option value="ar">العربية</option><option value="en">English</option></select>
+<hr><div class="sec" data-t="backup"></div><p data-t="backupP"></p><div class="two"><button class="btn s" id="bex" data-t="exportBtn"></button><button class="btn s" id="bim" data-t="importBtn"></button></div><input type="file" id="bfile" hidden>
+<hr><div class="sec" data-t="ice"></div><textarea class="ta" id="ice"></textarea><button class="btn s" id="icb" data-t="iceSave"></button>
 <button class="btn s" id="bat" data-t="battery"></button></div>
+
 <div class="pn" id="p-f"><h2 data-t="findFriend"></h2><p data-t="findP"></p><input class="k" id="fk" maxlength="10" placeholder="ABCDEF1234"><p id="fs"></p><button class="btn" id="fg" data-t="search"></button><button class="btn s" id="fa" hidden data-t="addAnyway"></button></div>
 <div class="pn" id="p-g"><h2 data-t="newGroup"></h2><input id="gn"><div id="gl"></div><button class="btn" id="gc" data-t="create"></button></div>
+
+<div class="pn" id="p-gi"><h2 data-t="groupInfo"></h2>
+<div class="av big" id="gav"></div><input type="file" id="gfile" accept="image/*" hidden>
+<label data-t="groupNameLbl"></label><input id="gname" maxlength="40"><button class="btn s" id="gsave" data-t="saveGroup"></button>
+<div class="sec" data-t="membersTitle"></div><div id="gmem"></div>
+<button class="btn s" id="gadd" data-t="addMembers"></button>
+<div id="gpdbox"><div class="sec" data-t="memberPerms"></div><div id="gpd"></div></div>
+<button class="btn r" id="gleave" data-t="leaveGroup"></button></div>
+<div class="pn" id="p-ga"><h2 data-t="addMembers"></h2><div id="gal"></div><button class="btn" id="gac" data-t="addMembers"></button></div>
+
 <div class="pn" id="p-s"><h2 data-t="stickerMaker"></h2><button class="btn s" id="pk" data-t="pickPhoto"></button><input type="file" id="fl" accept="image/*" hidden><canvas id="cv" width="256" height="256"></canvas><input type="range" id="zm" min="1" max="3" step=".05" value="1" style="width:100%"><div class="sh"><button class="btn s" data-s="s" data-t="square"></button><button class="btn s" data-s="r" data-t="rounded"></button><button class="btn s" data-s="c" data-t="circle"></button></div><input id="cap"><button class="btn" id="ss" data-t="saveSticker"></button></div>
 <div class="pn" id="p-q"><h2 data-t="scanQR"></h2><p data-t="scanP"></p><video id="vid" playsinline muted></video><canvas id="scv"></canvas><p id="qs"></p></div>
-<div class="pn" id="p-sec"><h2 data-t="security"></h2><p data-t="secP"></p><p><b data-t="fingerprintMine"></b></p><div class="fp" id="secme"></div><p><b data-t="theirPrint"></b></p><div class="fp" id="secthem"></div><button class="btn r" id="srt" data-t="resetTrust"></button></div>
+
+<div class="pn" id="p-sec"><h2 data-t="contactInfo"></h2>
+<div class="av big sm" id="cav"></div><div style="text-align:center"><b id="cin"></b><div id="ciu" class="fp" style="margin:2px 0"></div><p id="cib"></p></div>
+<input class="k" id="cik" readonly style="font-size:16px">
+<p data-t="secP"></p><p><b data-t="fingerprintMine"></b></p><div class="fp" id="secme"></div><p><b data-t="theirPrint"></b></p><div class="fp" id="secthem"></div><button class="btn r" id="srt" data-t="resetTrust"></button></div>
+
 <div class="pn" id="p-act"><div class="act" id="actl"></div></div>
 <div class="pn" id="p-att"><h2 data-t="attach"></h2><div class="two"><button class="btn s" id="aimg" data-t="pickImage"></button><button class="btn s" id="afil" data-t="pickFile"></button></div><input type="file" id="fimg" accept="image/*" hidden><input type="file" id="ffil" hidden></div>
 <div class="pn" id="p-inc"><h2 id="inct"></h2><div class="two"><button class="btn" id="inca" data-t="accept"></button><button class="btn r" id="incd" data-t="decline"></button></div></div>
@@ -23,4 +50,4 @@
 <div id="call"><video id="rv" autoplay playsinline></video><video id="lv" autoplay playsinline muted></video><h2 id="cnm"></h2><p id="cst"></p><div class="ctl"><button id="cmu">🎙</button><button class="e" id="cen">📵</button></div></div>
 </div>
 <script src="peerjs.min.js"></script><script src="qrcode.js"></script><script src="jsQR.js"></script>
-<script src="i18n.js"></script><script src="crypto.js"></script><script src="db.js"></script><script src="app.js"></script></body></html>
+<script src="i18n.js"></script><script src="crypto.js"></script><script src="groups.js"></script><script src="db.js"></script><script src="app.js"></script></body></html>

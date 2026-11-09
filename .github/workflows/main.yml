@@ -13,11 +13,11 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: JS syntax check
-        run: for f in app/src/main/assets/{app,crypto,db,i18n}.js; do node --check "$f"; done
+        run: for f in app/src/main/assets/{app,crypto,db,i18n,groups}.js; do node --check "$f"; done
       - name: Verify vendored libraries
         run: sha256sum -c app/src/main/assets/LIBS.sha256
       - name: Crypto tests
-        run: node --test tests/crypto.test.js
+        run: node --test tests/crypto.test.js tests/groups.test.js
 
   build:
     needs: test
