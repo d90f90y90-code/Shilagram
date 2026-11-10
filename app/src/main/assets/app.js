@@ -13,7 +13,7 @@
   // ---------- state ----------
   await DB.init();
   let ME = await DB.get('me'), ID = await DB.get('identity'), S = (await DB.get('state')) || { c: {}, g: {}, ice: '', lang: '' };
-  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {} }, S.set || {}); S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
+  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
   I18N.set(S.lang || I18N.detect());
   if (!ME) {
     const mig = await DB.migrateLegacy();
@@ -26,17 +26,18 @@
   }
   if (!ID) { ID = await C.newIdentity(); await DB.set('identity', ID); }
   ID.pub = U8(ID.pub);
+  let PIN = await DB.get('pin');
   let _st; const save = () => { clearTimeout(_st); _st = setTimeout(() => DB.set('state', S), 250); };
-  document.addEventListener('visibilitychange', () => { if (document.hidden) DB.set('state', S); else { poll(); if (peer && peer.disconnected) try { peer.reconnect(); } catch (e) {} } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { DB.set('state', S); window.__hiddenAt = Date.now(); } else { if (PIN && window.__hiddenAt && S.set.lockAfter >= 0 && Date.now() - window.__hiddenAt >= S.set.lockAfter * 1000) unlockLoop(); poll(); if (peer && peer.disconnected) try { peer.reconnect(); } catch (e) {} } });
   save();
 
-  let M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, scan = null, actM = null;
+  let M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null;
   const ch = id => S.c[id] || S.g[id], isG = id => !!S.g[id], on = k => !!(conns[k] && conns[k].auth);
   const members = id => isG(id) ? Object.keys(S.g[id].mem).filter(k => k !== ME.key) : [id];
   const nmOf = (id, f) => f === ME.key ? ME.name : (S.c[f] && S.c[f].name) || (S.g[id] && S.g[id].mem[f]) || f;
   const gTitle = (id, f) => (S.g[id] && S.g[id].titles && S.g[id].titles[f]) || '';
   const avStyle = (el, src, txt) => { if (src) { el.style.backgroundImage = 'url(' + src + ')'; el.textContent = ''; } else { el.style.backgroundImage = ''; el.textContent = txt || ''; } };
-  const tm = ts => new Date(ts).toLocaleTimeString(I18N.lang, { hour: '2-digit', minute: '2-digit' });
+  const tm = ts => new Date(ts).toLocaleTimeString(I18N.lang, { hour: '2-digit', minute: '2-digit', hour12: !S.set.h24 });
   const banner = x => { $('#bn').style.display = x ? 'block' : 'none'; $('#bn').textContent = x || ''; };
   const warn = x => { $('#warn').style.display = x ? 'block' : 'none'; $('#warn').textContent = x || ''; };
   const dialog = (msg, def) => prompt(msg, def || '');
@@ -45,9 +46,17 @@
   const b64Blob = (s, mime) => new Blob([C.unb64(s)], { type: mime || 'application/octet-stream' });
 
   function notify(title, text, id) {
-    if (!NATIVE || !(document.hidden || cur !== id)) return;
-    try { NATIVE.notify(title, text); } catch (e) {}
+    if (!NATIVE || !S.set.nt || !(document.hidden || cur !== id)) return;
+    try { NATIVE.notify(title, S.set.np ? t('newMsg') : text); } catch (e) {}
   }
+  function toast(m) { const e = $('#toast'); e.textContent = m; e.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => e.style.display = 'none', 1600); }
+  function copyText(x) {
+    let ok = false; if (NATIVE && NATIVE.copy) try { NATIVE.copy(x); ok = true; } catch (e) {}
+    const fallback = () => { const a = document.createElement('textarea'); a.value = x; document.body.append(a); a.select(); try { document.execCommand('copy'); } catch (e) {} a.remove(); };
+    if (!ok) { try { navigator.clipboard.writeText(x).catch(fallback); } catch (e) { fallback(); } }
+    toast(t('copied'));
+  }
+  document.addEventListener('contextmenu', e => { if (!/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) e.preventDefault(); });
 
   // ---------- messages ----------
   async function addMsg(id, m) {
@@ -83,6 +92,7 @@
   function iceServers() { try { const j = JSON.parse(S.ice); if (Array.isArray(j) && j.length) return j; } catch (e) {} return DEFAULT_ICE; }
   const run = (c, f) => { c.q = (c.q || Promise.resolve()).then(f).catch(e => console.warn('conn', e)); };
   function connect(k) {
+    if (S.block[k]) return;
     if (!peer || peer.disconnected || k === ME.key || on(k) || (conns[k] && conns[k].pend > Date.now())) return;
     const c = peer.connect('shilagram-' + k, { reliable: true }); c.want = k; c.pend = Date.now() + 15000; conns[k] = c; wire(c);
   }
@@ -115,6 +125,7 @@
     const pk = U8(d.pk), ep = U8(d.ep), nc = U8(d.nc);
     if (d.v !== 2 || typeof d.k !== 'string' || !KEYRE.test(d.k) || d.k === ME.key || !pk || pk.length !== 65 || !ep || ep.length !== 65 || !nc || nc.length !== 16) return c.close();
     if (c.want && c.want !== d.k) return c.close(); // we dialed X, X must be who answers
+    if (S.block[d.k]) return c.close();
     c.peerKey = d.k; c.peerName = String(d.n || d.k).slice(0, 30); c.pk = pk; c.theirEp = ep; c.theirNc = nc;
     await sendHi(c);
     const sig = await C.sign(ID.priv, nc, c.hello.ep, ep);
@@ -139,7 +150,7 @@
       if (g.owner === k && g.pend && g.pend.length) { const ops = g.pend; g.pend = []; save(); for (const op of ops) await sealTo(c, { t: 'gop', g: id, op }); }
     }
     for (const m of await DB.pendingMsgs()) if (m.p.includes(k) && (m.chat === k || (S.g[m.chat] && S.g[m.chat].mem[k]))) await sendMsgTo(c, m.chat, m);
-    if (srch && srch.key === k) { clearTimeout(srch.t); srch = null; $('#fg').disabled = 0; sheet(0); open(k); }
+    if (srch && srch.key === k && !srch.un) searchDone(k);
     list(); if (cur) drawHead();
   }
   async function handlePlain(c, h, bin) {
@@ -147,6 +158,7 @@
     if (h.t === 'gs') await receiveState(c, h);
     else if (h.t === 'gop') { const g = S.g[h.g]; if (g && g.owner === ME.key) { const ns = SG.applyOp(g, k, h.op); if (ns) await commitGroup(h.g, ns); } }
     else if (h.t === 'pf') receiveProfile(k, h);
+    else if (h.t === 'rec') { if (h.on && call && call.k === k) showRecNotice(); else if (!h.on) $('#recn').classList.remove('on'); }
     else if (h.t === 'm') {
       const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k])) return;
       if (h.g && !SG.can(o, k, (h.kind === 't' || !h.kind) ? 'send' : 'media')) return;
@@ -190,14 +202,17 @@
     peer.on('disconnected', () => { banner(t('serverLost')); setTimeout(() => { try { peer.reconnect(); } catch (e) {} }, 3000); });
     peer.on('error', e => {
       const m = /shilagram-([A-Z]{6}\d{4})/.exec(e.message || '');
-      if (e.type === 'peer-unavailable' && m) { const c = conns[m[1]]; if (c && !c.auth) delete conns[m[1]]; if (srch && srch.key === m[1]) nf(); return; }
+      if (e.type === 'peer-unavailable') {
+        const mu = /shilagram-u-([A-Za-z0-9_]+)/.exec(e.message || ''); if (mu) { if (srch && srch.un === mu[1].toLowerCase() && !srch.key) nf(); return; }
+        if (m) { const c = conns[m[1]]; if (c && !c.auth) delete conns[m[1]]; if (srch && srch.key === m[1]) nf(); } return;
+      }
       if (['unavailable-id', 'network', 'server-error', 'socket-error', 'socket-closed'].includes(e.type)) {
         banner(e.type === 'unavailable-id' ? t('keyBusy') : t('noNet')); try { peer.destroy(); } catch (x) {} setTimeout(start, 6000);
       }
     });
   }
   function poll() { const ks = new Set(Object.keys(S.c)); Object.values(S.g).forEach(g => Object.keys(g.mem).forEach(k => ks.add(k))); ks.forEach(connect); }
-  setInterval(() => { if (peer && !peer.disconnected) poll(); }, 20000);
+  setInterval(() => { if (peer && !peer.disconnected) { poll(); ensureDir(); } }, 20000);
 
   // ---------- list & chat UI ----------
   function list() {
@@ -240,6 +255,7 @@
       else if (m.kind === 'img' && m.b) { const im = document.createElement('img'); im.className = 'ph'; im.src = url(m.b); b.append(im); }
       else if (m.kind === 'vo' && m.b) { const a = document.createElement('audio'); a.controls = true; a.preload = 'metadata'; a.src = url(m.b); b.append(a); }
       else if (m.kind === 'file' && m.b) { const f = document.createElement('div'); f.className = 'fl'; f.innerHTML = '<span>📎</span><u></u>'; f.lastChild.textContent = (m.name || 'file') + ' (' + Math.ceil(m.b.size / 1024) + ' KB)'; f.onclick = () => saveBlob(m); b.append(f); }
+      else if (m.kind !== 't' && !m.b) { const s = document.createElement('span'); s.textContent = t('mediaGone'); s.style.opacity = '.6'; b.append(s); }
       else { const s = document.createElement('span'); s.textContent = m.x || ''; b.append(s); }
       const i = document.createElement('i'); i.textContent = (m.ed ? t('edited') + ' · ' : '') + tm(m.ts) + (m.me ? (m.p && !m.p.length ? ' ✓✓' : m.sent ? ' ✓' : ' ⏱') : ''); b.append(i);
       let h; const act = () => showActions(m);
@@ -260,6 +276,7 @@
     const L = $('#actl'); L.innerHTML = '';
     const add = (label, fn, cls) => { const b = document.createElement('button'); b.textContent = label; b.onclick = () => { sheet(0); fn(); }; L.append(b); };
     if (!m.del) add(t('reply'), () => setReply(m));
+    if (!m.del && m.kind === 't' && m.x) add(t('copy'), () => copyText(m.x));
     if (!m.del && m.me && m.kind === 't') add(t('edit'), async () => {
       const x = (dialog(t('edit'), m.x) || '').trim(); if (!x || x === m.x) return;
       m.x = x; m.ed = 1; await DB.putMsg(m); sendCtl(cur, { t: 'ed', i: m.mid, x }); await refreshMeta(cur); draw(); list();
@@ -276,9 +293,9 @@
   $('#rx').onclick = clearReply;
 
   // ---------- sheets ----------
-  function sheet(n) { $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'q') stopScan(); }
+  function sheet(n) { $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
   const closeSheet = () => sheet(0);
-  window.__back = () => { if (call) return 1; if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
+  window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if (call) return 1; if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
   $('#x').onclick = closeSheet; $('#sh').onclick = e => { if (e.target.id === 'sh') closeSheet(); };
 
   // ---------- pages ----------
@@ -293,20 +310,35 @@
   const FCS = ['#6f5b99', '#e9c46a', '#8b5cf6', '#2a8fd4', '#22c55e', '#ef4444', '#f97316', '#ec4899', '#ffffff', '#14b8a6'];
 
   // ---------- profile ----------
-  const USERRE = /^[A-Za-z][A-Za-z0-9_]{3,19}$/, FCRE = /^#[0-9a-fA-F]{6}$/, noCtl = (x, n) => String(x == null ? '' : x).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n);
+  const USERRE = /^(?=.{4,20}$)[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*$/, FCRE = /^#[0-9a-fA-F]{6}$/, noCtl = (x, n) => String(x == null ? '' : x).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n);
   let viewKey = null, draft = null, pAv;
-  async function squareAvatar(file, size = 160) {
-    const bm = await createImageBitmap(file), side = Math.min(bm.width, bm.height), cv = document.createElement('canvas'); cv.width = cv.height = size;
-    cv.getContext('2d').drawImage(bm, (bm.width - side) / 2, (bm.height - side) / 2, side, side, 0, 0, size, size);
-    for (let q = .85; q > .3; q -= .15) { const u = cv.toDataURL('image/jpeg', q); if (u.length <= 20000) return u; } return cv.toDataURL('image/jpeg', .3);
-  }
-  async function coverImage(file) {
-    const bm = await createImageBitmap(file);
-    for (const [w, h] of [[640, 320], [480, 240], [320, 160]]) {
-      const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const k = Math.max(w / bm.width, h / bm.height);
-      cv.getContext('2d').drawImage(bm, (w - bm.width * k) / 2, (h - bm.height * k) / 2, bm.width * k, bm.height * k);
-      for (let q = .8; q > .35; q -= .15) { const u = cv.toDataURL('image/jpeg', q); if (u.length <= 50000) return u; }
-    } throw new Error('big');
+  // ---------- image tool: crop + shrink to exactly the size the UI needs ----------
+  const AVO = { w: 160, h: 160, circle: 1, max: 20000 }, COVO = { w: 640, h: 320, max: 50000 };
+  function cropImage(file, o) {
+    return createImageBitmap(file).then(bm => new Promise(res => {
+      const cw = 280, ch = Math.round(280 * o.h / o.w), cv = $('#crv'), x = cv.getContext('2d'); cv.width = cw; cv.height = ch;
+      const st = { z: 1, ox: 0, oy: 0 }, base = Math.max(cw / bm.width, ch / bm.height);
+      const clamp = () => { const w = bm.width * base * st.z, h = bm.height * base * st.z; st.ox = Math.max(-(w - cw) / 2, Math.min((w - cw) / 2, st.ox)); st.oy = Math.max(-(h - ch) / 2, Math.min((h - ch) / 2, st.oy)); };
+      const paint = (g, W, H, k) => { const w = bm.width * base * st.z * k, h = bm.height * base * st.z * k; g.drawImage(bm, W / 2 - w / 2 + st.ox * k, H / 2 - h / 2 + st.oy * k, w, h); };
+      const draw = () => {
+        clamp(); x.fillStyle = '#000'; x.fillRect(0, 0, cw, ch); paint(x, cw, ch, 1);
+        if (o.circle) { x.save(); x.fillStyle = 'rgba(0,0,0,.62)'; x.beginPath(); x.rect(0, 0, cw, ch); x.moveTo(cw - 2, ch / 2); x.arc(cw / 2, ch / 2, cw / 2 - 2, 0, 7); x.fill('evenodd'); x.restore(); x.strokeStyle = '#fff'; x.lineWidth = 2; x.beginPath(); x.arc(cw / 2, ch / 2, cw / 2 - 2, 0, 7); x.stroke(); }
+      };
+      $('#crz').value = 1; draw();
+      let pd = null; cv.onpointerdown = e => { pd = [e.clientX, e.clientY]; cv.setPointerCapture(e.pointerId); }; cv.onpointerup = () => pd = null;
+      cv.onpointermove = e => { if (!pd) return; const r = cw / cv.getBoundingClientRect().width; st.ox += (e.clientX - pd[0]) * r; st.oy += (e.clientY - pd[1]) * r; pd = [e.clientX, e.clientY]; draw(); };
+      $('#crz').oninput = e => { st.z = +e.target.value; draw(); };
+      const out = () => {
+        for (const sc of [1, .75, .5]) {
+          const W = Math.round(o.w * sc), H = Math.round(o.h * sc), c2 = document.createElement('canvas'); c2.width = W; c2.height = H;
+          const g = c2.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); paint(g, W, H, W / cw);
+          for (let q = .85; q > .3; q -= .1) { const u = c2.toDataURL('image/jpeg', q); if (u.length <= o.max) return u; }
+        } return null;
+      };
+      const done = v => { cropRes = null; sheet(0); res(v); };
+      $('#cro').onclick = () => done(out()); $('#crc').onclick = () => done(null);
+      cropRes = res; sheet('crop');
+    }));
   }
   const drawMine = () => avStyle($('#mav'), ME.av, (ME.name || '?')[0]);
   const profileHdr = () => ({ t: 'pf', n: ME.name, u: ME.user || '', b: ME.bio || '', av: ME.av || '', cv: ME.cv || '', fc: ME.fc || '' });
@@ -317,6 +349,7 @@
     const av = String(h.av || ''); if (SG.okAv(av)) { if (av) o.av = av; else delete o.av; }
     const cv = String(h.cv || ''); if (SG.okImg(cv, 60000)) { if (cv) o.cv = cv; else delete o.cv; }
     const fc = String(h.fc || ''); if (FCRE.test(fc)) o.fc = fc; else delete o.fc;
+    if (srch && srch.un && srch.key === k) { if ((o.un || '').toLowerCase() === srch.un) searchDone(k); else searchFail(k); }
     save(); list(); if (cur) drawHead(); if (viewKey === k && $('#pg-view').classList.contains('on')) fillView(k);
   }
   // view page: what other people see (and the owner, with an Edit button)
@@ -325,12 +358,11 @@
     $('#vt').textContent = o.name; bigAv($('#vav'), o.av, o.fc); $('#vcov').style.backgroundImage = 'url("' + (o.cv || DEF_COVER) + '")';
     $('#vn').textContent = o.name; $('#vu').textContent = user ? '@' + user : '—'; $('#vk').textContent = key; $('#vb').textContent = o.bio || '—';
     $('#vedit').style.display = me ? '' : 'none'; $('#vsec').style.display = me ? 'none' : '';
-    const q = qrcode(0, 'M'); q.addData('shilagram:' + key); q.make(); $('#vqr').innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }).replace(/black/gi, '#2d1b57');
     if (!me) { C.fingerprint(ID.pub).then(f => $('#secme').textContent = f); if (o.pk) C.fingerprint(C.unb64(o.pk)).then(f => $('#secthem').textContent = f); else $('#secthem').textContent = t('notVerified'); }
   }
   function openProfileView(key) { fillView(key); showPage('view'); }
   $('#mav').onclick = () => openProfileView(ME.key);
-  $('#vkr').onclick = () => { try { navigator.clipboard.writeText(viewKey); } catch (e) {} const b = $('#vk'); b.textContent = t('keyCopied'); setTimeout(() => b.textContent = viewKey, 1200); };
+  $('#vkr').onclick = () => copyText(viewKey);
   // edit page: changes are kept in a draft until "Save"
   function renderEdit() {
     bigAv($('#eav'), draft.av, draft.fc); $('#en').textContent = draft.name; $('#eu').textContent = draft.user ? '@' + draft.user : '';
@@ -338,13 +370,14 @@
   }
   function openProfileEdit() { draft = { name: ME.name, user: ME.user || '', bio: ME.bio || '', av: ME.av || '', cv: ME.cv || '', fc: ME.fc || '' }; renderEdit(); showPage('edit'); }
   $('#vedit').onclick = openProfileEdit; $('#ecancel').onclick = closePage;
-  $('#esv').onclick = () => {
+  $('#esv').onclick = async () => {
+    if ((draft.user || '') !== (ME.user || '')) { const r = await claimUsername(draft.user); if (r === false) return alert(t('userTaken')); if (r === 'net') toast(t('userPending')); }
     Object.assign(ME, { name: draft.name, user: draft.user, bio: draft.bio }); ['av', 'cv', 'fc'].forEach(k => { if (draft[k]) ME[k] = draft[k]; else delete ME[k]; });
     DB.set('me', ME); drawMine(); broadcastProfile(); closePage(); if (viewKey === ME.key) fillView(ME.key);
   };
   $('#eavb').onclick = $('#eav').onclick = () => $('#pfile').click(); $('#ecovb').onclick = $('#ecov').onclick = () => $('#cfile').click();
-  $('#pfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { draft.av = await squareAvatar(f); renderEdit(); } catch (x) { alert(t('tooBig')); } };
-  $('#cfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { draft.cv = await coverImage(f); renderEdit(); } catch (x) { alert(t('tooBig')); } };
+  $('#pfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, AVO); if (u) { draft.av = u; renderEdit(); } } catch (x) { alert(t('tooBig')); } };
+  $('#cfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, COVO); if (u) { draft.cv = u; renderEdit(); } } catch (x) { alert(t('tooBig')); } };
   let efKind;
   function editField(kind) {
     efKind = kind; const bio = kind === 'bio'; $('#eft').textContent = t(kind === 'name' ? 'chName' : kind === 'user' ? 'chUser' : 'chBio');
@@ -373,7 +406,8 @@
   function applySettings() {
     const st = S.set, r = document.documentElement, bg = st.bg || { t: 'none' };
     if (st.theme === 'auto') r.removeAttribute('data-theme'); else r.setAttribute('data-theme', st.theme);
-    r.style.setProperty('--fs', st.fs + 'px');
+    r.style.setProperty('--fs', st.fs + 'px'); r.style.setProperty('--br', (st.br == null ? 14 : st.br) + 'px'); r.classList.toggle('nomo', !!st.nomo);
+    if (NATIVE && NATIVE.setSecure) try { NATIVE.setSecure(!!st.secure); } catch (e) {}
     ['hd', 'pri', 'bg', 'out', 'in'].forEach(k => { const v = st.cust && st.cust[k]; if (v) r.style.setProperty('--' + k, v); else r.style.removeProperty('--' + k); });
     if (st.cust && st.cust.bg) { const m = 'color-mix(in srgb,' + st.cust.bg + ' 82%,#000)'; r.style.setProperty('--bg2', m); r.style.setProperty('--chat', m); } else { r.style.removeProperty('--bg2'); r.style.removeProperty('--chat'); }
     $('#ms').style.background = (bg.t === 'c' || bg.t === 'g') ? bg.v : (bg.t === 'img' && bgUrl) ? 'center / cover url(' + bgUrl + ')' : '';
@@ -420,7 +454,11 @@
   PG_ON.dl = async () => {
     dlClear(); const L = $('#dll'); L.innerHTML = '';
     const ms = (await DB.allMsgs()).filter(m => m.b && !m.del && ['img', 'vo', 'file'].includes(m.kind)).sort((a, b) => b.ts - a.ts);
-    if (!ms.length) { L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg>' + t('noDownloads') + '</div>'; return; }
+    S.recs.forEach(rc => { const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"><svg class="ic"><use href="#i-video"/></svg></div><div class="mid"><b></b><span></span></div><button class="x2">✕</button>';
+      r.querySelector('b').textContent = t('recDl') + ' · ' + nmOf(rc.k, rc.k); r.querySelector('.mid span').textContent = Math.ceil((rc.size || 0) / 1024) + ' KB · ' + new Date(rc.ts).toLocaleString(I18N.lang);
+      r.onclick = async () => { const b = await DB.get('rec:' + rc.id); if (b) saveBlob({ b, name: rc.name, mime: rc.mime, kind: 'file' }); };
+      r.querySelector('.x2').onclick = async e => { e.stopPropagation(); if (!confirm(t('delSt'))) return; await DB.del('rec:' + rc.id); S.recs = S.recs.filter(x => x.id !== rc.id); save(); PG_ON.dl(); }; L.append(r); });
+    if (!ms.length && !S.recs.length) { L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg>' + t('noDownloads') + '</div>'; return; }
     ms.forEach(m => {
       const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"></div><div class="mid"><b></b><span></span></div><svg class="ic"><use href="#i-download"/></svg>';
       const th = r.firstChild; if (m.kind === 'img') { const u = URL.createObjectURL(m.b); dlUrls.push(u); th.style.backgroundImage = 'url(' + u + ')'; } else th.innerHTML = '<svg class="ic"><use href="#i-' + (m.kind === 'vo' ? 'mic' : 'file') + '"/></svg>';
@@ -457,31 +495,31 @@
   };
 
   // find friend / QR
-  $('#bf').onclick = () => { $('#fk').value = ''; $('#fs').textContent = ''; $('#fa').hidden = 1; $('#fg').disabled = 0; sheet('f'); };
-  $('#fk').oninput = e => e.target.value = e.target.value.toUpperCase();
-  function nf() { clearTimeout(srch.t); $('#fs').textContent = t('notFound'); $('#fa').hidden = 0; $('#fg').disabled = 0; }
-  $('#fg').onclick = () => {
-    const k = $('#fk').value.trim().toUpperCase(); $('#fa').hidden = 1;
-    if (!KEYRE.test(k)) return $('#fs').textContent = t('badKey'); if (k === ME.key) return $('#fs').textContent = t('yourOwn');
-    if (S.c[k]) { sheet(0); return open(k); } if (!peer || peer.disconnected) return $('#fs').textContent = t('noNet');
-    $('#fs').textContent = t('searching'); $('#fg').disabled = 1; srch = { key: k, t: setTimeout(() => srch && nf(), 12000) }; connect(k);
+  $('#bf').onclick = () => { $('#fk').value = ''; $('#fs').textContent = ''; $('#fa').hidden = 1; $('#fg').disabled = 0; $('#fk').placeholder = t('findPh'); sheet('f'); };
+  function nf() { if (!srch) return; clearTimeout(srch.t); $('#fs').textContent = t('notFound'); $('#fa').hidden = !!srch.un; $('#fg').disabled = 0; }
+  function searchDone(k) { if (!srch) return; clearTimeout(srch.t); srch = null; $('#fg').disabled = 0; sheet(0); open(k); }
+  function searchFail(k) { if (!srch) return; clearTimeout(srch.t); srch = null; const o = S.c[k]; if (o && !o.last) delete S.c[k]; try { conns[k] && conns[k].close(); } catch (e) {} save(); list(); $('#fs').textContent = t('userMismatch'); $('#fg').disabled = 0; }
+  $('#fg').onclick = () => { // find by key (ABCDEF1234) or by @username
+    const raw = $('#fk').value.trim(), q = raw.replace(/^@/, ''); $('#fa').hidden = 1;
+    if (!raw.startsWith('@') && /^[A-Za-z]{6}\d{4}$/.test(q)) {
+      const k = q.toUpperCase(); if (k === ME.key) return $('#fs').textContent = t('yourOwn'); if (S.c[k]) { sheet(0); return open(k); }
+      if (!peer || peer.disconnected) return $('#fs').textContent = t('noNet');
+      $('#fs').textContent = t('searching'); $('#fg').disabled = 1; srch = { key: k, t: setTimeout(() => srch && nf(), 12000) }; return connect(k);
+    }
+    if (!USERRE.test(q)) return $('#fs').textContent = t('badQuery');
+    const un = q.toLowerCase(); if (ME.user && ME.user.toLowerCase() === un) return $('#fs').textContent = t('yourOwn');
+    const lk = Object.keys(S.c).find(k => (S.c[k].un || '').toLowerCase() === un); if (lk) { sheet(0); return open(lk); }
+    if (!peer || peer.disconnected) return $('#fs').textContent = t('noNet');
+    $('#fs').textContent = t('searching'); $('#fg').disabled = 1; srch = { un, t: setTimeout(() => srch && nf(), 12000) };
+    const c = peer.connect('shilagram-u-' + un, { reliable: true });
+    c.on('data', d => { // the directory peer answers with a key; the key's owner must then confirm the same @username in its profile
+      if (!d || d.t !== 'ans' || typeof d.k !== 'string' || !KEYRE.test(d.k) || !srch || srch.un !== un || srch.key) return;
+      srch.key = d.k; try { c.close(); } catch (e) {} if (d.k === ME.key) return nf(); connect(d.k);
+    });
+    c.on('error', () => {});
   };
   function addContact(k) { if (!S.c[k]) S.c[k] = { name: k, u: 0, last: 0 }; save(); connect(k); sheet(0); open(k); }
-  $('#fa').onclick = () => addContact(srch && srch.key || $('#fk').value.trim().toUpperCase());
-  $('#bq').onclick = async () => {
-    sheet('q'); $('#qs').textContent = '';
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); const v = $('#vid'); v.srcObject = s; await v.play(); scan = { s, on: 1 };
-      const cv = $('#scv'), x = cv.getContext('2d', { willReadFrequently: true });
-      const tick = () => {
-        if (!scan || !scan.on) return;
-        if (v.videoWidth) { cv.width = v.videoWidth; cv.height = v.videoHeight; x.drawImage(v, 0, 0); const im = x.getImageData(0, 0, cv.width, cv.height), r = jsQR(im.data, im.width, im.height);
-          if (r && r.data) { const m = /^shilagram:([A-Z]{6}\d{4})$/.exec(r.data); if (m && m[1] !== ME.key) { stopScan(); return addContact(m[1]); } $('#qs').textContent = t('qrBad'); } }
-        requestAnimationFrame(tick);
-      }; tick();
-    } catch (e) { $('#qs').textContent = t('noCam'); }
-  };
-  function stopScan() { if (scan) { scan.on = 0; scan.s.getTracks().forEach(x => x.stop()); scan = null; } }
+  $('#fa').onclick = () => { const q = $('#fk').value.trim().replace(/^@/, '').toUpperCase(); if (KEYRE.test(q)) addContact(q); };
 
   // ---------- groups ----------
   const PERM_LBL = { send: 'permSend', media: 'permMedia', info: 'permInfo', add: 'permAdd' }, ROLE_ORD = { o: 0, a: 1, m: 2 };
@@ -550,7 +588,7 @@
     if (!refreshOnly) sheet('gi');
   }
   $('#gav').onclick = () => { const g = S.g[cur]; if (g && !g.left && SG.can(g, ME.key, 'info')) $('#gfile').click(); };
-  $('#gfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { await groupAct(cur, { a: 'av', v: await squareAvatar(f) }); } catch (x) { alert(t('tooBig')); } };
+  $('#gfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, AVO); if (u) await groupAct(cur, { a: 'av', v: u }); } catch (x) { alert(t('tooBig')); } };
   $('#gsave').onclick = () => { const v = $('#gname').value.trim(); if (v && v !== S.g[cur].name) groupAct(cur, { a: 'name', v }); };
   function memberMenu(k) {
     const id = cur, g = S.g[id]; if (!g || !g.mem[k]) return sheet('gi'); const L = $('#actl'); L.innerHTML = '';
@@ -580,6 +618,7 @@
   $('#bm').onclick = () => {
     const L = $('#actl'); L.innerHTML = ''; const add = (l, f) => { const b = document.createElement('button'); b.textContent = l; b.onclick = () => { sheet(0); f(); }; L.append(b); };
     add(isG(cur) ? 'ℹ️ ' + t('groupInfo') : '🔐 ' + t('contactInfo'), () => isG(cur) ? openGroupInfo() : openContactInfo());
+    if (!isG(cur)) add('⛔ ' + t('block'), () => { if (!confirm(t('confirmBlock'))) return; S.block[cur] = 1; try { conns[cur] && conns[cur].close(); } catch (e) {} save(); toast(t('cleared')); });
     add('🗑 ' + t('delChat'), async () => { if (!confirm(t('delChat'))) return; await DB.delChat(cur); delete S.c[cur]; delete S.g[cur]; delete M[cur]; save(); back(); });
     add(t('cancelAct'), () => {}); sheet('act');
   };
@@ -587,6 +626,7 @@
   $('#srt').onclick = () => { const o = S.c[viewKey]; if (o) { delete o.pk; save(); warn(0); fillView(viewKey); } };
 
   // composer
+  $('#t').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && S.set.enter) { e.preventDefault(); $('#bs').click(); } });
   $('#bs').onclick = () => { const x = $('#t').value.trim(); if (!x) return; sendMsg({ kind: 't', x }); $('#t').value = ''; $('#t').style.height = ''; };
   $('#t').oninput = e => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; };
   $('#ba').onclick = () => sheet('att');
@@ -639,12 +679,12 @@
   async function media(video) { const c = S.set.call; return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !!c.echo, noiseSuppression: !!c.noise, autoGainControl: !!c.agc }, video: video ? { facingMode: c.front ? 'user' : 'environment' } : false }); }
   function showCall(k, status) { $('#cnm').textContent = nmOf(k, k); $('#cst').textContent = status || ''; $('#call').classList.add('on'); }
   function setupCall(cl, k, stream, video) {
-    call = { cl, stream, k }; showCall(k, t('calling'));
+    call = { cl, stream, k, video: !!video }; showCall(k, t('calling'));
     $('#lv').srcObject = stream; $('#lv').classList.toggle('v1', !!video);
     cl.on('stream', rs => { $('#rv').srcObject = rs; $('#rv').classList.toggle('v1', rs.getVideoTracks().length > 0); $('#cst').textContent = ''; });
     cl.on('close', endCall); cl.on('error', () => { $('#cst').textContent = t('callFail'); setTimeout(endCall, 1200); });
   }
-  function endCall() { if (!call) return; try { call.cl.close(); } catch (e) {} call.stream.getTracks().forEach(x => x.stop()); call = null; $('#call').classList.remove('on'); $('#rv').srcObject = $('#lv').srcObject = null; $('#rv').classList.remove('v1'); $('#lv').classList.remove('v1'); }
+  function endCall() { if (!call) return; stopRec(); const c = call; call = null; $('#recn').classList.remove('on'); try { c.cl.close(); } catch (e) {} c.stream.getTracks().forEach(x => x.stop()); $('#call').classList.remove('on'); $('#rv').srcObject = $('#lv').srcObject = null; $('#rv').classList.remove('v1'); $('#lv').classList.remove('v1'); }
   async function startCall(video) {
     if (!cur || isG(cur) || call) return; if (!on(cur)) return alert(t('callNeedOnline'));
     try { const s = await media(video); setupCall(peer.call('shilagram-' + cur, s, { metadata: { video } }), cur, s, video); } catch (e) { alert(t('noMic')); }
@@ -661,12 +701,139 @@
     $('#incd').onclick = () => { pendingCall = null; sheet(0); cl.close(); };
   }
 
+  // ---------- username directory: a 2nd PeerJS id "shilagram-u-<name>" answers lookups with our key (first come, first served while online) ----------
+  let dirPeer = null, dirName = null;
+  function attachDir(p) {
+    p.on('connection', c => c.on('open', () => { try { c.send({ t: 'ans', k: ME.key }); } catch (e) {} setTimeout(() => { try { c.close(); } catch (e) {} }, 2000); }));
+    p.on('disconnected', () => { try { p.reconnect(); } catch (e) {} }); p.on('error', () => {});
+  }
+  function stopDir() { if (dirPeer) try { dirPeer.destroy(); } catch (e) {} dirPeer = null; dirName = null; }
+  function claimUsername(u) {
+    return new Promise(res => {
+      if (!u) { stopDir(); return res(true); }
+      const un = u.toLowerCase(); if (dirPeer && dirName === un && !dirPeer.destroyed) return res(true);
+      let p; try { p = new Peer('shilagram-u-' + un, { config: { iceServers: iceServers() } }); } catch (e) { return res('net'); }
+      let fin = 0; const end = v => { if (fin) return; fin = 1; clearTimeout(to); if (v === true) { stopDir(); dirPeer = p; dirName = un; attachDir(p); } else try { p.destroy(); } catch (e) {} res(v); };
+      const to = setTimeout(() => end('net'), 8000);
+      p.on('open', () => end(true)); p.on('error', e => end(e.type === 'unavailable-id' ? false : 'net'));
+    });
+  }
+  function ensureDir() { if (ME.user && (!dirPeer || dirPeer.destroyed)) claimUsername(ME.user); }
+
+  // ---------- call recording (what you see + both voices), with a notice sent to the other side ----------
+  let crec = null, recnT;
+  function showRecNotice() { const n = $('#recn'); n.textContent = t('recNotice'); n.classList.add('on'); clearTimeout(recnT); recnT = setTimeout(() => n.classList.remove('on'), 5000); }
+  async function toggleRec() {
+    if (crec) return stopRec(); if (!call) return;
+    if (!on(call.k) || !(await sealTo(conns[call.k], { t: 'rec', on: 1 }))) return alert(t('callFail')); // never record unless the other side was told
+    startRec();
+  }
+  function startRec() {
+    const W = 360, H = 640, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const x = cv.getContext('2d'), rv = $('#rv'), lv = $('#lv'), k = call.k, t0 = Date.now(), hasV = call.video;
+    const ac = new (window.AudioContext || window.webkitAudioContext)(), dest = ac.createMediaStreamDestination();
+    const addA = s => { if (s && s.getAudioTracks().length) try { ac.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(dest); } catch (e) {} };
+    addA(rv.srcObject); addA(call.stream);
+    const fmt = () => { const s = Math.floor((Date.now() - t0) / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+    const draw = () => {
+      x.fillStyle = '#0b1320'; x.fillRect(0, 0, W, H);
+      if (rv.videoWidth && rv.srcObject && rv.srcObject.getVideoTracks().length) { const sc = Math.max(W / rv.videoWidth, H / rv.videoHeight), w = rv.videoWidth * sc, h = rv.videoHeight * sc; x.drawImage(rv, (W - w) / 2, (H - h) / 2, w, h); }
+      else { x.fillStyle = '#6f5b99'; x.beginPath(); x.arc(W / 2, H / 2 - 40, 70, 0, 7); x.fill(); x.fillStyle = '#fff'; x.font = 'bold 64px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText((nmOf(k, k) || '?')[0], W / 2, H / 2 - 38); }
+      if (hasV && lv.videoWidth) x.drawImage(lv, W - 108, 12, 96, 128);
+      x.textBaseline = 'alphabetic'; x.textAlign = 'center'; x.fillStyle = '#fff'; x.font = 'bold 20px sans-serif'; x.fillText(nmOf(k, k), W / 2, H - 52); x.font = '16px sans-serif'; x.fillText(fmt(), W / 2, H - 28);
+      $('#rect').textContent = '● ' + fmt();
+    };
+    draw(); const iv = setInterval(draw, 100);
+    const stream = new MediaStream([...cv.captureStream(15).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    const mt = ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+    const r = new MediaRecorder(stream, mt ? { mimeType: mt, videoBitsPerSecond: 700000, audioBitsPerSecond: 64000 } : {}), chunks = [];
+    r.ondataavailable = e => e.data.size && chunks.push(e.data);
+    r.onstop = async () => {
+      clearInterval(iv); try { ac.close(); } catch (e) {}
+      const mime = (r.mimeType || 'video/webm').split(';')[0], b = new Blob(chunks, { type: mime }); if (!b.size) return;
+      const id = rid(8), name = 'shilagram-call-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + (mime.includes('mp4') ? '.mp4' : '.webm');
+      await DB.set('rec:' + id, b); S.recs.unshift({ id, name, ts: Date.now(), k, size: b.size, mime }); save(); toast(t('recSaved'));
+    };
+    r.start(1000); crec = { r, k }; $('#crec').classList.add('on'); $('#rect').classList.add('on');
+  }
+  function stopRec() {
+    if (!crec) return; const c = crec; crec = null; $('#crec').classList.remove('on'); $('#rect').classList.remove('on');
+    try { c.r.stop(); } catch (e) {} if (on(c.k)) sealTo(conns[c.k], { t: 'rec', on: 0 });
+  }
+  $('#crec').onclick = toggleRec;
+
+  // ---------- app lock ----------
+  let padRes = null, padBuf = '', fails = 0, waitUntil = 0, lockedNow = false;
+  const padDraw = () => { const d = $('#lkd'); if (d.children.length !== 4) d.innerHTML = '<i></i><i></i><i></i><i></i>'; [...d.children].forEach((e, i) => e.classList.toggle('f', i < padBuf.length)); };
+  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'].forEach(k => { const b = document.createElement('button'); b.textContent = k; if (!k) b.style.visibility = 'hidden'; b.onclick = () => padKey(k); $('#lkp').append(b); });
+  function padKey(k) { if (!padRes) return; if (k === '⌫') padBuf = padBuf.slice(0, -1); else if (padBuf.length < 4) padBuf += k; padDraw(); if (padBuf.length === 4) { const v = padBuf, r = padRes; padBuf = ''; padRes = null; setTimeout(padDraw, 120); r(v); } }
+  function askPin(title, cancel, err) { return new Promise(res => { $('#lkt').textContent = title; $('#lke').textContent = err || ''; padBuf = ''; padDraw(); $('#lkc').hidden = !cancel; $('#lkav').style.display = cancel ? 'none' : ''; avStyle($('#lkav'), ME.av, (ME.name || '?')[0]); padRes = res; $('#lock').classList.add('on'); $('#lkc').onclick = () => { padRes = null; res(null); }; }); }
+  const hidePad = () => { padRes = null; $('#lock').classList.remove('on'); };
+  async function unlockLoop() {
+    if (!PIN || lockedNow) return; lockedNow = true; let msg = '';
+    for (;;) {
+      if (Date.now() < waitUntil) { msg = t('pinTooMany'); await new Promise(r => setTimeout(r, waitUntil - Date.now())); }
+      const v = await askPin(t('lockTitle'), false, msg); if (v !== null && (await C.pinHash(v, PIN.s)) === PIN.h) break;
+      msg = t('pinWrong'); if (++fails >= 5) { waitUntil = Date.now() + 30000; fails = 0; }
+    }
+    hidePad(); lockedNow = false; fails = 0;
+  }
+  async function checkPin(title) { const v = await askPin(title, true); if (v === null) { hidePad(); return false; } const ok = (await C.pinHash(v, PIN.s)) === PIN.h; if (!ok) { hidePad(); toast(t('pinWrong')); } return ok; }
+  async function setPin() {
+    const a = await askPin(t('pinNew'), true); if (a === null) return hidePad(); const b = await askPin(t('pinConfirm'), true); hidePad(); if (b === null) return;
+    if (a !== b) return toast(t('pinMismatch')); const s = C.b64(C.rnd(16)); PIN = { s, h: await C.pinHash(a, s) }; await DB.set('pin', PIN); toast(t('cleared'));
+  }
+
+  // ---------- more settings pages ----------
+  const tgl = (L, label, on_, fn) => { const b = document.createElement('button'); b.className = 'tg'; b.textContent = (on_ ? '✅ ' : '⬜ ') + label; b.onclick = fn; L.append(b); };
+  PG_ON.chatset = () => {
+    const L = $('#cst2'); L.innerHTML = '';
+    tgl(L, t('enterSend'), S.set.enter, () => { S.set.enter = S.set.enter ? 0 : 1; save(); PG_ON.chatset(); });
+    tgl(L, t('h24'), S.set.h24, () => { S.set.h24 = S.set.h24 ? 0 : 1; save(); PG_ON.chatset(); });
+    tgl(L, t('noMotion'), S.set.nomo, () => { S.set.nomo = S.set.nomo ? 0 : 1; save(); applySettings(); PG_ON.chatset(); });
+    $('#brr').value = S.set.br;
+  };
+  $('#brr').oninput = e => { S.set.br = +e.target.value; save(); applySettings(); };
+  PG_ON.notif = () => {
+    const L = $('#ntl'); L.innerHTML = '';
+    tgl(L, t('notifOn'), S.set.nt, () => { S.set.nt = S.set.nt ? 0 : 1; save(); PG_ON.notif(); });
+    tgl(L, t('notifHide'), S.set.np, () => { S.set.np = S.set.np ? 0 : 1; save(); PG_ON.notif(); });
+    $('#nsys').style.display = NATIVE ? '' : 'none';
+  };
+  $('#nsys').onclick = () => NATIVE && NATIVE.notifSettings && NATIVE.notifSettings();
+  PG_ON.priv = () => {
+    const L = $('#prl'); L.innerHTML = '';
+    tgl(L, t('appLock'), !!PIN, async () => { if (PIN) { if (await checkPin(t('pinCurrent'))) { hidePad(); await DB.del('pin'); PIN = null; } } else await setPin(); PG_ON.priv(); });
+    if (PIN) {
+      tgl(L, t('changePin'), false, async () => { if (await checkPin(t('pinCurrent'))) { await setPin(); } PG_ON.priv(); });
+      const lb = document.createElement('div'); lb.className = 'sec'; lb.textContent = t('lockAfter'); const sg = document.createElement('div'); sg.className = 'seg';
+      [[0, 'lockNow'], [60, 'lock1'], [300, 'lock5'], [-1, 'lockStart']].forEach(([v, l]) => { const b = document.createElement('button'); b.textContent = t(l); b.classList.toggle('on', S.set.lockAfter === v); b.onclick = () => { S.set.lockAfter = v; save(); PG_ON.priv(); }; sg.append(b); }); L.append(lb, sg);
+    }
+    tgl(L, t('noShots'), S.set.secure, () => { S.set.secure = S.set.secure ? 0 : 1; save(); applySettings(); PG_ON.priv(); });
+    const B = $('#blk'); B.innerHTML = ''; const ks = Object.keys(S.block);
+    if (!ks.length) B.innerHTML = '<p>' + t('noBlocked') + '</p>';
+    ks.forEach(k => { const r = document.createElement('div'); r.className = 'crow'; r.innerHTML = '<span></span><button class="wb"></button>'; r.firstChild.textContent = (S.c[k] && S.c[k].name) || k; r.lastChild.textContent = t('unblock'); r.lastChild.onclick = () => { delete S.block[k]; save(); PG_ON.priv(); connect(k); }; B.append(r); });
+  };
+  PG_ON.store = async () => {
+    const ms = await DB.allMsgs(); let mb = 0, mc = 0; ms.forEach(m => { if (m.b) { mb += m.b.size; mc++; } }); const rb = S.recs.reduce((a, r) => a + (r.size || 0), 0);
+    const f = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.ceil(n / 1024) + ' KB', S_ = $('#stats'); S_.innerHTML = '';
+    [[t('storMsgs'), ms.length], [t('storMedia'), mc + ' · ' + f(mb)], [t('storRecs'), S.recs.length + ' · ' + f(rb)]].forEach(([a, b]) => { const r = document.createElement('div'); r.className = 'crow'; r.innerHTML = '<span></span><b></b>'; r.firstChild.textContent = a; r.lastChild.textContent = b; S_.append(r); });
+  };
+  $('#clm').onclick = async () => {
+    if (!confirm(t('confirmClear'))) return; for (const m of await DB.allMsgs()) if (m.b) { delete m.b; await DB.putMsg(m); }
+    for (const r of S.recs) await DB.del('rec:' + r.id); S.recs = []; save(); if (cur) { M[cur] = await DB.chatMsgs(cur); draw(); } PG_ON.store(); toast(t('cleared'));
+  };
+  $('#clc').onclick = async () => {
+    if (!confirm(t('confirmClear'))) return; await DB.clearMsgs(); Object.values(S.c).concat(Object.values(S.g)).forEach(o => { o.last = 0; o.u = 0; o.lk = ''; o.lx = ''; }); M = {}; save(); list(); if (cur) back(); PG_ON.store(); toast(t('cleared'));
+  };
+  PG_ON.about = () => { $('#abv').textContent = t('aboutVer') + ': ' + (NATIVE && NATIVE.version ? NATIVE.version() : 'web'); };
+  $('#rst').onclick = async () => { if (!confirm(t('confirmReset'))) return; await DB.wipe(); try { localStorage.clear(); } catch (e) {} location.reload(); };
+
   // ---------- boot ----------
   function applyLang() {
     $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t));
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
-  await loadBg(); applySettings(); drawMine(); applyLang(); start();
+  await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); setTimeout(ensureDir, 3000);
   if (NATIVE && NATIVE.ready) try { NATIVE.ready(); } catch (e) {}
 })();

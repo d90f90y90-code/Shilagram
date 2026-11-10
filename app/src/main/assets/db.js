@@ -19,6 +19,8 @@
     });
   }
   const get = k => req(tx('kv').get(k));
+  const del = k => req(tx('kv', 'readwrite').delete(k));
+  const clearMsgs = () => req(tx('msgs', 'readwrite').clear());
   const set = (k, v) => req(tx('kv', 'readwrite').put(v, k));
   const putMsg = m => req(tx('msgs', 'readwrite').put(m));
   const delMsg = id => req(tx('msgs', 'readwrite').delete(id));
@@ -57,5 +59,5 @@
     return { me: old.me, state };
   }
 
-  G.ShilaDB = { getMsg, wipe, allStickers: stickers, init, get, set, putMsg, delMsg, chatMsgs, pendingMsgs, delChat, stickers, putSticker, delSticker, allMsgs, migrateLegacy };
+  G.ShilaDB = { del, clearMsgs, getMsg, wipe, allStickers: stickers, init, get, set, putMsg, delMsg, chatMsgs, pendingMsgs, delChat, stickers, putSticker, delSticker, allMsgs, migrateLegacy };
 })(window);

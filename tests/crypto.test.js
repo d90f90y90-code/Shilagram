@@ -65,3 +65,10 @@ test('backup lock/unlock round trip and wrong password', async () => {
   assert.equal(await C.unlock('pw1', f), '{"a":"مرحبا"}');
   await assert.rejects(C.unlock('nope', f));
 });
+
+test('pin hash is deterministic per salt and differs for other PINs/salts', async () => {
+  const s1 = C.b64(C.rnd(16)), s2 = C.b64(C.rnd(16));
+  assert.equal(await C.pinHash('1234', s1), await C.pinHash('1234', s1));
+  assert.notEqual(await C.pinHash('1234', s1), await C.pinHash('1235', s1));
+  assert.notEqual(await C.pinHash('1234', s1), await C.pinHash('1234', s2));
+});
