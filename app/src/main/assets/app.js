@@ -295,7 +295,7 @@
   // ---------- sheets ----------
   function sheet(n) { $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
   const closeSheet = () => sheet(0);
-  window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if (call) return 1; if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
+  window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if ($('#call').classList.contains('on') && !$('#call').classList.contains('min')) { minimizeCall(); return 1; } if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
   $('#x').onclick = closeSheet; $('#sh').onclick = e => { if (e.target.id === 'sh') closeSheet(); };
 
   // ---------- pages ----------
@@ -638,16 +638,40 @@
   }
   $('#fimg').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; sheet(0); if (!f) return; try { const b = await shrink(f); if (b.size > MAXB) return alert(t('tooBig')); sendMsg({ kind: 'img', b, mime: 'image/jpeg' }); } catch (x) { alert(t('tooBig')); } };
   $('#ffil').onchange = e => { const f = e.target.files[0]; e.target.value = ''; sheet(0); if (!f) return; if (f.size > MAXB) return alert(t('tooBig')); sendMsg({ kind: 'file', b: f, mime: 'application/octet-stream', name: f.name }); };
-  $('#bv').onclick = async () => {
-    if (rec) { rec.stop(); return; }
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true }), mt = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(x => window.MediaRecorder && MediaRecorder.isTypeSupported(x));
-      const r = new MediaRecorder(s, mt ? { mimeType: mt } : {}), chunks = [], t0 = Date.now(); rec = r; $('#bv').classList.add('rec');
-      r.ondataavailable = e => e.data.size && chunks.push(e.data);
-      r.onstop = () => { s.getTracks().forEach(x => x.stop()); rec = null; $('#bv').classList.remove('rec'); const b = new Blob(chunks, { type: (r.mimeType || 'audio/webm').split(';')[0] }); if (b.size > MAXB) return alert(t('tooBig')); if (b.size) sendMsg({ kind: 'vo', b, mime: b.type, dur: Math.round((Date.now() - t0) / 1000) }); };
-      r.start();
-    } catch (e) { alert(t('noMic')); }
+  // voice message: hold the mic to record, drag sideways to cancel, drag up to lock, release to send
+  let vr = null, vDown = false, vX = 0, vY = 0;
+  const SLIDE = 90, UP = 70, bv = $('#bv'), rb2 = $('#rbar2');
+  const vSign = () => I18N.lang === 'ar' ? 1 : -1; // direction of "start" along x (RTL: right)
+  function vUi(on_) { $('.bar').classList.toggle('recing', on_); rb2.classList.toggle('on', on_); $('#rlock').classList.toggle('on', on_ && !(vr && vr.locked)); bv.classList.toggle('holding', on_ && !(vr && vr.locked)); if (!on_) { bv.style.transform = ''; rb2.classList.remove('lk'); $('#rcan').hidden = $('#rsend').hidden = true; $('#rh').style.display = ''; bv.classList.remove('hide'); $('#rlock').classList.remove('hot'); } }
+  async function vStart(e) {
+    if (vr || !window.MediaRecorder) return; vDown = true; vX = e.clientX; vY = e.clientY; vr = { pending: true, locked: false }; const me = vr;
+    try { bv.setPointerCapture(e.pointerId); } catch (x) {} document.documentElement.style.setProperty('--sd', vSign()); vUi(true); try { navigator.vibrate && navigator.vibrate(12); } catch (x) {}
+    let s; try { s = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (x) { vr = null; vUi(false); return alert(t('noMic')); }
+    if (vr !== me || (!vDown && !me.locked)) { s.getTracks().forEach(x => x.stop()); if (vr === me) { vr = null; vUi(false); toast(t('recHold')); } return; } // released (or interrupted by the permission dialog) before the mic was ready
+    const mt = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(x => MediaRecorder.isTypeSupported(x)), r = new MediaRecorder(s, mt ? { mimeType: mt } : {}), chunks = [];
+    Object.assign(me, { r, s, chunks, t0: Date.now(), pending: false, mime: (mt || 'audio/webm').split(';')[0] });
+    r.ondataavailable = ev => ev.data.size && chunks.push(ev.data);
+    r.onstop = () => {
+      s.getTracks().forEach(x => x.stop()); clearInterval(me.iv); const dur = (Date.now() - me.t0) / 1000, b = new Blob(chunks, { type: (r.mimeType || me.mime).split(';')[0] });
+      if (me.send && dur >= .6 && b.size) { if (b.size > MAXB) alert(t('tooBig')); else sendMsg({ kind: 'vo', b, mime: b.type, dur: Math.round(dur) }); } else if (me.send && dur < .6) toast(t('recHold'));
+    };
+    r.start(); me.iv = setInterval(() => { $('#rtm').textContent = fmtT(Date.now() - me.t0).replace(/^00:/, '0:'); }, 200); $('#rtm').textContent = '0:00';
+    if (me.stop) vFinish(me.send, true); // released while the recorder was starting
+  }
+  function vFinish(send, quiet) {
+    const me = vr; if (!me) return; me.send = send; if (me.pending) { me.stop = true; if (!send) { vr = null; vUi(false); } return; }
+    vr = null; try { me.r.stop(); } catch (x) {} const cls = send ? 'sent' : 'shake'; if (!send) rb2.classList.add('drop'); rb2.classList.add(cls);
+    setTimeout(() => { rb2.classList.remove(cls, 'drop'); vUi(false); }, send ? 220 : 340);
+  }
+  bv.onpointerdown = e => { e.preventDefault(); vStart(e); };
+  bv.onpointermove = e => {
+    if (!vr || !vDown || vr.locked) return; const dx = (e.clientX - vX) * vSign(), dy = vY - e.clientY, sl = Math.max(0, dx), up = Math.max(0, dy);
+    bv.style.transform = 'translate(' + (sl * vSign()) + 'px,' + (-Math.min(up, UP + 10)) + 'px) scale(1.5)'; $('#rh').style.opacity = Math.max(0, 1 - sl / SLIDE); $('#rlock').classList.toggle('hot', up > UP * .6);
+    if (sl > SLIDE) { vDown = false; vFinish(false); }
+    else if (up > UP && !vr.pending) { vr.locked = true; rb2.classList.add('lk'); $('#rh').style.display = 'none'; $('#rcan').hidden = $('#rsend').hidden = false; bv.classList.add('hide'); bv.classList.remove('holding'); bv.style.transform = ''; $('#rlock').classList.remove('on'); }
   };
+  bv.onpointerup = bv.onpointercancel = () => { if (!vDown) return; vDown = false; if (vr && !vr.locked) vFinish(true); };
+  $('#rcan').onclick = () => vFinish(false); $('#rsend').onclick = () => vFinish(true);
 
   // stickers
   async function trayDraw() {
@@ -677,20 +701,27 @@
   // ---------- calls ----------
   const peerKey = id => String(id).replace(/^shilagram-/, '');
   async function media(video) { const c = S.set.call; return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: !!c.echo, noiseSuppression: !!c.noise, autoGainControl: !!c.agc }, video: video ? { facingMode: c.front ? 'user' : 'environment' } : false }); }
-  function showCall(k, status) { $('#cnm').textContent = nmOf(k, k); $('#cst').textContent = status || ''; $('#call').classList.add('on'); }
+  let callTick = null;
+  const fmtT = ms => { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+  function callUi() { if (!call) return; const x = call.t0 ? fmtT(Date.now() - call.t0) : t('calling'); $('#cst').textContent = call.t0 ? x : t('calling'); $('#cmt').textContent = x; }
+  function miniVid() { const rs = $('#rv').srcObject, has = !!(rs && rs.getVideoTracks && rs.getVideoTracks().length); $('#cmv').srcObject = has ? rs : null; $('#cmv').classList.toggle('on', has && $('#call').classList.contains('min')); }
+  function minimizeCall() { if (!call) return; $('#call').classList.add('min'); $('#cmini').classList.add('on'); $('#app').classList.add('incall'); miniVid(); }
+  function restoreCall() { $('#call').classList.remove('min'); $('#cmini').classList.remove('on'); $('#app').classList.remove('incall'); $('#cmv').classList.remove('on'); }
+  function showCall(k, status) { $('#cnm').textContent = nmOf(k, k); $('#cmn').textContent = nmOf(k, k); $('#cst').textContent = status || ''; $('#cmt').textContent = status || ''; restoreCall(); $('#call').classList.add('on'); }
   function setupCall(cl, k, stream, video) {
     call = { cl, stream, k, video: !!video }; showCall(k, t('calling'));
     $('#lv').srcObject = stream; $('#lv').classList.toggle('v1', !!video);
-    cl.on('stream', rs => { $('#rv').srcObject = rs; $('#rv').classList.toggle('v1', rs.getVideoTracks().length > 0); $('#cst').textContent = ''; });
+    cl.on('stream', rs => { $('#rv').srcObject = rs; $('#rv').classList.toggle('v1', rs.getVideoTracks().length > 0); if (call && !call.t0) call.t0 = Date.now(); clearInterval(callTick); callTick = setInterval(callUi, 1000); callUi(); miniVid(); });
     cl.on('close', endCall); cl.on('error', () => { $('#cst').textContent = t('callFail'); setTimeout(endCall, 1200); });
   }
-  function endCall() { if (!call) return; stopRec(); const c = call; call = null; $('#recn').classList.remove('on'); try { c.cl.close(); } catch (e) {} c.stream.getTracks().forEach(x => x.stop()); $('#call').classList.remove('on'); $('#rv').srcObject = $('#lv').srcObject = null; $('#rv').classList.remove('v1'); $('#lv').classList.remove('v1'); }
+  function endCall() { if (!call) return; stopRec(); const c = call; call = null; clearInterval(callTick); restoreCall(); $('#cmu').textContent = '🎙'; $('#cmmu').classList.remove('off'); $('#cmv').srcObject = null; $('#recn').classList.remove('on'); try { c.cl.close(); } catch (e) {} c.stream.getTracks().forEach(x => x.stop()); $('#call').classList.remove('on'); $('#rv').srcObject = $('#lv').srcObject = null; $('#rv').classList.remove('v1'); $('#lv').classList.remove('v1'); }
   async function startCall(video) {
     if (!cur || isG(cur) || call) return; if (!on(cur)) return alert(t('callNeedOnline'));
     try { const s = await media(video); setupCall(peer.call('shilagram-' + cur, s, { metadata: { video } }), cur, s, video); } catch (e) { alert(t('noMic')); }
   }
   $('#bc1').onclick = () => startCall(false); $('#bc2').onclick = () => startCall(true); $('#cen').onclick = endCall;
-  $('#cmu').onclick = () => { if (!call) return; const tr = call.stream.getAudioTracks()[0]; if (tr) { tr.enabled = !tr.enabled; $('#cmu').textContent = tr.enabled ? '🎙' : '🔇'; } };
+  function toggleMute() { if (!call) return; const tr = call.stream.getAudioTracks()[0]; if (tr) { tr.enabled = !tr.enabled; $('#cmu').textContent = tr.enabled ? '🎙' : '🔇'; $('#cmmu').classList.toggle('off', !tr.enabled); } }
+  $('#cmu').onclick = $('#cmmu').onclick = toggleMute; $('#cmin').onclick = minimizeCall; $('#cmm').onclick = $('#cmv').onclick = restoreCall; $('#cme').onclick = endCall;
   function onIncomingCall(cl) {
     const k = peerKey(cl.peer);
     if (!on(k) || call || pendingCall) { try { cl.close(); } catch (e) {} return; } // only authenticated contacts may ring us
@@ -830,7 +861,7 @@
 
   // ---------- boot ----------
   function applyLang() {
-    $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t));
+    $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t)); document.documentElement.style.setProperty('--sd', I18N.lang === 'ar' ? 1 : -1);
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }

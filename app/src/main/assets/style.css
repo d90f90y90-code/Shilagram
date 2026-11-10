@@ -105,3 +105,38 @@ img{-webkit-user-drag:none;user-drag:none}
 #lkc{background:none;color:var(--mut);margin-top:8px;padding:10px}
 .seg.col{flex-direction:column}
 .dlr .x2{background:none;color:var(--mut);font-size:16px;padding:6px 10px}
+
+/* ===== call: minimize to a floating bar so the app stays usable ===== */
+#call{transition:opacity .2s,transform .2s}#call.on.min{opacity:0;pointer-events:none;transform:scale(.92) translateY(30px)}
+.cmin{position:absolute;top:14px;inset-inline-start:14px;width:42px;height:42px;border-radius:50%;background:#ffffff22;color:#fff;z-index:2;display:grid;place-items:center}
+#cmini{position:absolute;top:66px;left:10px;right:10px;z-index:55;display:none;align-items:center;gap:8px;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border-radius:26px;padding:6px 8px;box-shadow:0 6px 18px #0006}#cmini.on{display:flex;animation:drop .22s ease-out}
+@keyframes drop{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:none}}
+#cmini button{background:#ffffff26;color:#fff;border-radius:50%;width:38px;height:38px;display:grid;place-items:center;flex:none}#cmini .cmm{flex:1;width:auto;border-radius:22px;display:flex;gap:8px;justify-content:flex-start;align-items:center;padding:0 12px;height:38px;background:none}
+#cmini .cmm b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%}#cmini .cmm span{font-variant-numeric:tabular-nums;font-size:14px;opacity:.9}
+#cmini .e{background:#dc2626}#cmini .e .ic{transform:rotate(135deg)}#cmini button.off{background:#7f1d1d}
+#cmv{position:absolute;top:122px;inset-inline-end:10px;width:84px;height:112px;object-fit:cover;border-radius:14px;border:2px solid var(--acc);z-index:55;display:none;background:#000;box-shadow:0 6px 16px #0007}#cmv.on{display:block;animation:drop .22s ease-out}
+/* ===== voice message: hold to record, drag to cancel / lock, release to send ===== */
+.bar{position:relative}
+#rbar2{display:none;position:absolute;inset-block:0;inset-inline-start:0;inset-inline-end:92px;background:var(--bg);align-items:center;gap:10px;padding:0 14px;z-index:2;pointer-events:none}
+#rbar2.on{display:flex;animation:slin .18s ease-out}#rbar2.lk{pointer-events:auto}
+@keyframes slin{from{opacity:0;transform:translateX(calc(var(--sd,1) * 36px))}to{opacity:1;transform:none}}
+.rd{width:12px;height:12px;border-radius:50%;background:#ef4444;animation:bl 1s infinite;flex:none}#rtm{font-variant-numeric:tabular-nums;min-width:42px}
+.rh{margin-inline-start:auto;color:var(--mut);display:flex;align-items:center;gap:4px;font-size:14px;animation:nudge 1.3s ease-in-out infinite;white-space:nowrap;transition:opacity .1s}
+@keyframes nudge{50%{transform:translateX(calc(var(--sd,1) * 9px))}}
+.rcb{width:40px;height:40px;border-radius:50%;background:var(--bg2);color:var(--red);display:grid;place-items:center;flex:none}.rcb.s{background:var(--pri);color:#fff;margin-inline-start:auto}
+#rbar2.lk #rtm{margin-inline-end:auto}
+#bv{position:relative;z-index:3;transition:transform .15s,background .15s,color .15s;touch-action:none}
+#bv.holding{transform:scale(1.75);background:#ef4444;color:#fff;border-radius:50%;animation:ring 1.2s infinite;transition:none}
+@keyframes ring{0%{box-shadow:0 0 0 0 #ef444499}70%{box-shadow:0 0 0 16px #ef444400}100%{box-shadow:0 0 0 0 #ef444400}}
+#bv.hide{visibility:hidden}
+#rlock{display:none;position:absolute;bottom:64px;inset-inline-end:46px;width:38px;height:78px;border-radius:20px;background:var(--bg2);border:2px solid var(--ln);flex-direction:column;align-items:center;justify-content:space-around;color:var(--mut);z-index:3}
+#rlock.on{display:flex;animation:pop .18s ease-out}#rlock .up{transform:rotate(180deg);animation:nudgeY 1s ease-in-out infinite}#rlock.hot{border-color:var(--acc);color:var(--acc)}
+@keyframes nudgeY{50%{transform:rotate(180deg) translateY(-5px)}}@keyframes pop{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:none}}
+#rbar2.shake{animation:shk .32s}@keyframes shk{20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+#rbar2.drop .rd{animation:fall .3s forwards}@keyframes fall{to{transform:translateY(26px) rotate(40deg);opacity:0}}
+#rbar2.sent{animation:fly .22s forwards}@keyframes fly{to{opacity:0;transform:translateX(calc(var(--sd,1) * -40px))}}
+
+.rcb[hidden]{display:none}.bar.recing #bs{opacity:0;pointer-events:none}.bar.recing>.em:not(#bv){visibility:hidden}
+#bv.holding{transform:scale(1.5)}
+
+#app.incall .v{top:54px}#app .v{transition:top .2s}#cmini{top:6px}#cmv{top:66px}
