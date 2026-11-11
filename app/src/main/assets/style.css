@@ -140,3 +140,10 @@ img{-webkit-user-drag:none;user-drag:none}
 #bv.holding{transform:scale(1.5)}
 
 #app.incall .v{top:54px}#app .v{transition:top .2s}#cmini{top:6px}#cmv{top:66px}
+
+/* friend requests + identity-change banner */
+.sec2{padding:10px 16px 4px;font-weight:800;color:var(--acc);font-size:14px}
+.rq{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--ln);flex-wrap:wrap}.rq .mid{flex:1;min-width:0}.rq .mid b{display:block}.rq .mid span{color:var(--mut);font-size:13px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rqb{display:flex;gap:6px;width:100%;padding-inline-start:58px}.rqb button{flex:1;padding:9px 6px;border-radius:8px;font-weight:700;background:var(--bg2);color:var(--ink)}.rqb .y{background:var(--pri);color:#fff}.rqb .b{color:var(--red)}
+.rq.po{opacity:.85}.rq.po .x3{background:none;color:var(--mut);font-size:18px;padding:6px 10px}
+.rotb{background:#b45309;color:#fff;padding:10px 12px;display:flex;gap:10px;align-items:center;font-size:14px;line-height:1.6}.rotb[hidden]{display:none}.rotb span{flex:1}.rotb button{background:#fff;color:#7c2d12;border-radius:6px;padding:7px 10px;font-weight:800}

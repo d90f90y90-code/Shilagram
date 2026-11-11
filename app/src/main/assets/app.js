@@ -13,7 +13,7 @@
   // ---------- state ----------
   await DB.init();
   let ME = await DB.get('me'), ID = await DB.get('identity'), S = (await DB.get('state')) || { c: {}, g: {}, ice: '', lang: '' };
-  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
+  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.req = S.req || {}; S.out = S.out || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
   I18N.set(S.lang || I18N.detect());
   if (!ME) {
     const mig = await DB.migrateLegacy();
@@ -31,7 +31,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { DB.set('state', S); window.__hiddenAt = Date.now(); } else { if (PIN && window.__hiddenAt && S.set.lockAfter >= 0 && Date.now() - window.__hiddenAt >= S.set.lockAfter * 1000) unlockLoop(); poll(); if (peer && peer.disconnected) try { peer.reconnect(); } catch (e) {} } });
   save();
 
-  let M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null;
+  let rot = {}, seen = {}, act = {}, bootT = Date.now(), M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null;
   const ch = id => S.c[id] || S.g[id], isG = id => !!S.g[id], on = k => !!(conns[k] && conns[k].auth);
   const members = id => isG(id) ? Object.keys(S.g[id].mem).filter(k => k !== ME.key) : [id];
   const nmOf = (id, f) => f === ME.key ? ME.name : (S.c[f] && S.c[f].name) || (S.g[id] && S.g[id].mem[f]) || f;
@@ -98,6 +98,7 @@
   }
   function drop(c) {
     const k = c.key || c.want;
+    if (c.auth) seen[k] = Date.now();
     if (k && conns[k] === c) { delete conns[k]; list(); if (cur) drawHead(); }
   }
   function wire(c) {
@@ -108,7 +109,7 @@
   async function sendHi(c) {
     if (c.sentHi) return; c.sentHi = 1;
     c.hello = await C.newHello(ID.pub);
-    c.send({ t: 'hi', v: 2, k: ME.key, n: ME.name, pk: ID.pub, ep: c.hello.ep, nc: c.hello.nc });
+    c.send({ t: 'hi', v: 2, k: ME.key, n: ME.name, u: ME.user || '', pk: ID.pub, ep: c.hello.ep, nc: c.hello.nc });
   }
   async function onData(c, d) {
     if (!d || typeof d !== 'object') return;
@@ -116,7 +117,8 @@
     if (d.t === 'au') return handleAu(c, d);
     if (d.t === 'e' && c.auth) {
       const iv = U8(d.iv), dd = U8(d.d); if (!iv || !dd) return;
-      const { header, bin } = await C.open(c.aes, { iv, d: dd });
+      const { header, bin } = await C.open(c.aes, { iv, d: dd }); act[c.key] = Date.now();
+      if (header.t === 'pg') return; // heartbeat
       return handlePlain(c, header, bin);
     }
   }
@@ -126,35 +128,44 @@
     if (d.v !== 2 || typeof d.k !== 'string' || !KEYRE.test(d.k) || d.k === ME.key || !pk || pk.length !== 65 || !ep || ep.length !== 65 || !nc || nc.length !== 16) return c.close();
     if (c.want && c.want !== d.k) return c.close(); // we dialed X, X must be who answers
     if (S.block[d.k]) return c.close();
-    c.peerKey = d.k; c.peerName = String(d.n || d.k).slice(0, 30); c.pk = pk; c.theirEp = ep; c.theirNc = nc;
+    c.peerKey = d.k; c.peerName = String(d.n || d.k).slice(0, 30); c.peerUser = USERRE.test(String(d.u || '')) ? String(d.u) : ''; c.pk = pk; c.theirEp = ep; c.theirNc = nc;
     await sendHi(c);
     const sig = await C.sign(ID.priv, nc, c.hello.ep, ep);
     c.send({ t: 'au', s: sig });
     c.aes = await C.deriveKey(c.hello.eph, c.hello.ep, ep);
   }
+  const groupsWith = k => Object.values(S.g).filter(g => g.mem && g.mem[k] && !g.left);
+  const related = k => !!(S.c[k] || S.out[k] || S.req[k] || groupsWith(k).length);
   async function handleAu(c, d) {
     if (!c.pk || !c.hello || c.auth || !c.aes) return;
     const s = U8(d.s); if (!s || !(await C.verify(c.pk, s, c.hello.nc, c.theirEp, c.hello.ep))) return c.close();
-    const k = c.peerKey, pkb = C.b64(c.pk); let o = S.c[k];
-    if (!o) o = S.c[k] = { name: c.peerName, u: 0, last: 0 }; else o.name = c.peerName;
-    if (o.pk && o.pk !== pkb) { warn(t('keyChanged') + o.name + '. ' + t('keyChangedHelp')); save(); return c.close(); }
-    o.pk = pkb;
+    const k = c.peerKey, pkb = C.b64(c.pk), o = S.c[k], pinned = (o && o.pk) || S.pins[k];
+    if (pinned && pinned !== pkb) { warn(t('keyChanged') + ((o && o.name) || c.peerName || k) + '. ' + t('keyChangedHelp')); save(); return c.close(); }
+    if (related(k)) { S.pins[k] = pkb; if (o) { o.pk = pkb; if (c.peerName) o.name = c.peerName; } }
     if (conns[k] && conns[k] !== c && conns[k].auth) try { conns[k].close(); } catch (e) {}
-    conns[k] = c; c.auth = 1; c.key = k; save();
+    conns[k] = c; c.auth = 1; c.key = k; seen[k] = Date.now(); save();
+    if (srch && srch.key === k && srch.un) { // username lookup: the key's owner must announce the same @username
+      if (c.peerUser && c.peerUser.toLowerCase() === srch.un) searchDone(k); else return searchFail(k);
+    }
+    if (!related(k)) c.stTimer = setTimeout(() => { if (!related(k)) try { c.close(); } catch (e) {} }, 20000); // strangers must send a friend request quickly
     await onAuthed(c, k);
   }
   async function onAuthed(c, k) {
-    await sealTo(c, profileHdr());
+    if (S.c[k]) { await sealTo(c, S.c[k].rq ? Object.assign(profileHdr(), { t: 'fr' }) : { t: 'fa' }); await sealTo(c, profileHdr()); } // rq: a friend who changed key must confirm us again
+    else if (S.out[k]) await sealTo(c, Object.assign(profileHdr(), { t: 'fr' }));
     for (const [id, g] of Object.entries(S.g)) {
       if (g.mem[k] && g.raw) await sealTo(c, { t: 'gs', raw: g.raw, sig: g.sig });
       if (g.owner === k && g.pend && g.pend.length) { const ops = g.pend; g.pend = []; save(); for (const op of ops) await sealTo(c, { t: 'gop', g: id, op }); }
     }
     for (const m of await DB.pendingMsgs()) if (m.p.includes(k) && (m.chat === k || (S.g[m.chat] && S.g[m.chat].mem[k]))) await sendMsgTo(c, m.chat, m);
-    if (srch && srch.key === k && !srch.un) searchDone(k);
     list(); if (cur) drawHead();
   }
   async function handlePlain(c, h, bin) {
     const k = c.key;
+    if (h.t === 'fr') return receiveRequest(c, h);
+    if (h.t === 'fa') return receiveAccept(c);
+    if (h.t === 'fd') return receiveDecline(k);
+    if (!S.c[k] && !['gs', 'gop', 'm', 'a', 'd', 'ed'].includes(h.t)) return; // non-friends may only take part in shared groups
     if (h.t === 'gs') await receiveState(c, h);
     else if (h.t === 'gop') { const g = S.g[h.g]; if (g && g.owner === ME.key) { const ns = SG.applyOp(g, k, h.op); if (ns) await commitGroup(h.g, ns); } }
     else if (h.t === 'pf') receiveProfile(k, h);
@@ -196,14 +207,14 @@
   function start() {
     banner(t('connecting'));
     try { peer = new Peer('shilagram-' + ME.key, { config: { iceServers: iceServers() } }); } catch (e) { return banner(t('libFail')); }
-    peer.on('open', () => { banner(0); poll(); });
+    peer.on('open', () => { banner(0); poll(); ensureDir(); });
     peer.on('connection', wire);
     peer.on('call', onIncomingCall);
     peer.on('disconnected', () => { banner(t('serverLost')); setTimeout(() => { try { peer.reconnect(); } catch (e) {} }, 3000); });
     peer.on('error', e => {
       const m = /shilagram-([A-Z]{6}\d{4})/.exec(e.message || '');
       if (e.type === 'peer-unavailable') {
-        const mu = /shilagram-u-([A-Za-z0-9_]+)/.exec(e.message || ''); if (mu) { if (srch && srch.un === mu[1].toLowerCase() && !srch.key) nf(); return; }
+        const mu = /shilagram-u-([A-Za-z0-9_]+)/.exec(e.message || ''); if (mu) { const f = lookups[mu[1].toLowerCase()]; if (f) f(null); return; }
         if (m) { const c = conns[m[1]]; if (c && !c.auth) delete conns[m[1]]; if (srch && srch.key === m[1]) nf(); } return;
       }
       if (['unavailable-id', 'network', 'server-error', 'socket-error', 'socket-closed'].includes(e.type)) {
@@ -211,12 +222,16 @@
       }
     });
   }
-  function poll() { const ks = new Set(Object.keys(S.c)); Object.values(S.g).forEach(g => Object.keys(g.mem).forEach(k => ks.add(k))); ks.forEach(connect); }
-  setInterval(() => { if (peer && !peer.disconnected) { poll(); ensureDir(); } }, 20000);
+  function poll() { const ks = new Set([...Object.keys(S.c), ...Object.keys(S.out)]); Object.values(S.g).forEach(g => Object.keys(g.mem).forEach(k => ks.add(k))); ks.forEach(connect); }
+  setInterval(() => {
+    Object.keys(conns).forEach(k => { const c = conns[k]; if (!c.auth) return; if (S.c[k]) sealTo(c, { t: 'pg' }); if (Date.now() - Math.max(act[k] || 0, seen[k] || 0) > 90000) try { c.close(); } catch (e) {} }); // heartbeat; drop silent connections
+    if (peer && !peer.disconnected) { poll(); checkRotation(); }
+  }, 20000);
+  setInterval(() => ensureDir(), 8000);
 
   // ---------- list & chat UI ----------
   function list() {
-    $('#mk').textContent = t('myKey') + ME.key;
+    $('#mk').textContent = ME.user ? '@' + ME.user : t('noUser'); renderReqs();
     const L = $('#list'); L.innerHTML = '';
     const rows = [...Object.entries(S.c).map(([id, o]) => [id, o, 0]), ...Object.entries(S.g).map(([id, o]) => [id, o, 1])].sort((a, b) => (b[1].last || 0) - (a[1].last || 0));
     if (!rows.length) L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg>' + t('noChats') + '</div>';
@@ -234,9 +249,9 @@
   async function open(id) {
     cur = id; ch(id).u = 0; save(); M[id] = await DB.chatMsgs(id); clearReply();
     $('#chat').classList.add('on'); $('#tray').classList.remove('on'); $('#bc1').style.display = $('#bc2').style.display = isG(id) ? 'none' : '';
-    drawHead(); updateComposer(); draw(1); list();
+    drawHead(); updateComposer(); draw(1); list(); showRot();
   }
-  function back() { cur = null; $('#chat').classList.remove('on'); list(); }
+  function back() { cur = null; $('#rotb').hidden = true; $('#chat').classList.remove('on'); list(); }
   function drawHead() {
     const o = ch(cur); if (!o) return;
     $('#cn').textContent = o.name; avStyle($('#ca'), o.av, isG(cur) ? '👥' : (o.name || '?')[0]);
@@ -293,8 +308,8 @@
   $('#rx').onclick = clearReply;
 
   // ---------- sheets ----------
-  function sheet(n) { $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
-  const closeSheet = () => sheet(0);
+  function sheet(n) { $('#x').style.display = n === 'un' ? 'none' : ''; $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
+  const closeSheet = () => { if (userPending()) return; sheet(0); };
   window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if ($('#call').classList.contains('on') && !$('#call').classList.contains('min')) { minimizeCall(); return 1; } if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
   $('#x').onclick = closeSheet; $('#sh').onclick = e => { if (e.target.id === 'sh') closeSheet(); };
 
@@ -349,7 +364,6 @@
     const av = String(h.av || ''); if (SG.okAv(av)) { if (av) o.av = av; else delete o.av; }
     const cv = String(h.cv || ''); if (SG.okImg(cv, 60000)) { if (cv) o.cv = cv; else delete o.cv; }
     const fc = String(h.fc || ''); if (FCRE.test(fc)) o.fc = fc; else delete o.fc;
-    if (srch && srch.un && srch.key === k) { if ((o.un || '').toLowerCase() === srch.un) searchDone(k); else searchFail(k); }
     save(); list(); if (cur) drawHead(); if (viewKey === k && $('#pg-view').classList.contains('on')) fillView(k);
   }
   // view page: what other people see (and the owner, with an Edit button)
@@ -380,6 +394,7 @@
   $('#cfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, COVO); if (u) { draft.cv = u; renderEdit(); } } catch (x) { alert(t('tooBig')); } };
   let efKind;
   function editField(kind) {
+    if (kind === 'user' && ME.user) return toast(t('userLocked'));
     efKind = kind; const bio = kind === 'bio'; $('#eft').textContent = t(kind === 'name' ? 'chName' : kind === 'user' ? 'chUser' : 'chBio');
     $('#efpw').style.display = bio ? 'none' : 'flex'; $('#efpw .efp').style.display = kind === 'user' ? '' : 'none'; $('#efa').style.display = bio ? '' : 'none'; $('#efe').textContent = '';
     $('#efi').maxLength = kind === 'user' ? 20 : 30; $('#efi').dir = kind === 'user' ? 'ltr' : 'auto'; (bio ? $('#efa') : $('#efi')).value = draft[kind]; sheet('ef');
@@ -495,31 +510,102 @@
   };
 
   // find friend / QR
-  $('#bf').onclick = () => { $('#fk').value = ''; $('#fs').textContent = ''; $('#fa').hidden = 1; $('#fg').disabled = 0; $('#fk').placeholder = t('findPh'); sheet('f'); };
-  function nf() { if (!srch) return; clearTimeout(srch.t); $('#fs').textContent = t('notFound'); $('#fa').hidden = !!srch.un; $('#fg').disabled = 0; }
-  function searchDone(k) { if (!srch) return; clearTimeout(srch.t); srch = null; $('#fg').disabled = 0; sheet(0); open(k); }
-  function searchFail(k) { if (!srch) return; clearTimeout(srch.t); srch = null; const o = S.c[k]; if (o && !o.last) delete S.c[k]; try { conns[k] && conns[k].close(); } catch (e) {} save(); list(); $('#fs').textContent = t('userMismatch'); $('#fg').disabled = 0; }
-  $('#fg').onclick = () => { // find by key (ABCDEF1234) or by @username
-    const raw = $('#fk').value.trim(), q = raw.replace(/^@/, ''); $('#fa').hidden = 1;
-    if (!raw.startsWith('@') && /^[A-Za-z]{6}\d{4}$/.test(q)) {
-      const k = q.toUpperCase(); if (k === ME.key) return $('#fs').textContent = t('yourOwn'); if (S.c[k]) { sheet(0); return open(k); }
-      if (!peer || peer.disconnected) return $('#fs').textContent = t('noNet');
-      $('#fs').textContent = t('searching'); $('#fg').disabled = 1; srch = { key: k, t: setTimeout(() => srch && nf(), 12000) }; return connect(k);
-    }
-    if (!USERRE.test(q)) return $('#fs').textContent = t('badQuery');
-    const un = q.toLowerCase(); if (ME.user && ME.user.toLowerCase() === un) return $('#fs').textContent = t('yourOwn');
-    const lk = Object.keys(S.c).find(k => (S.c[k].un || '').toLowerCase() === un); if (lk) { sheet(0); return open(lk); }
-    if (!peer || peer.disconnected) return $('#fs').textContent = t('noNet');
-    $('#fs').textContent = t('searching'); $('#fg').disabled = 1; srch = { un, t: setTimeout(() => srch && nf(), 12000) };
-    const c = peer.connect('shilagram-u-' + un, { reliable: true });
-    c.on('data', d => { // the directory peer answers with a key; the key's owner must then confirm the same @username in its profile
-      if (!d || d.t !== 'ans' || typeof d.k !== 'string' || !KEYRE.test(d.k) || !srch || srch.un !== un || srch.key) return;
-      srch.key = d.k; try { c.close(); } catch (e) {} if (d.k === ME.key) return nf(); connect(d.k);
+  // ---------- find a friend by @username and send a friend request ----------
+  const lookups = {};
+  function dirLookup(un) { // ask the directory peer "shilagram-u-<un>" which key owns this username
+    return new Promise(res => {
+      if (!peer || peer.disconnected) return res(null);
+      let c, to; const fin = v => { if (lookups[un] === fin) delete lookups[un]; clearTimeout(to); try { c && c.close(); } catch (e) {} res(v); };
+      lookups[un] = fin; to = setTimeout(() => fin(null), 10000);
+      try { c = peer.connect('shilagram-u-' + un, { reliable: true }); } catch (e) { return fin(null); }
+      c.on('data', d => { if (d && d.t === 'ans' && typeof d.k === 'string' && KEYRE.test(d.k)) fin(d.k); }); c.on('error', () => fin(null)); c.on('close', () => setTimeout(() => fin(null), 400));
     });
-    c.on('error', () => {});
+  }
+  $('#bf').onclick = () => { if (!ME.user) return askUser(); if (srch) { clearTimeout(srch.t); srch = null; } $('#fk').value = ''; $('#fs').textContent = ''; $('#fg').disabled = 0; $('#fk').placeholder = t('findPh'); sheet('f'); };
+  function nf() { if (!srch) return; clearTimeout(srch.t); srch = null; $('#fs').textContent = t('notFoundUser'); $('#fg').disabled = 0; }
+  function searchFail(k) { if (!srch) return; clearTimeout(srch.t); srch = null; try { conns[k] && conns[k].close(); } catch (e) {} $('#fs').textContent = t('userMismatch'); $('#fg').disabled = 0; }
+  function searchDone(k) {
+    if (!srch) return; clearTimeout(srch.t); const un = srch.un; srch = null; $('#fg').disabled = 0;
+    if (S.c[k]) { sheet(0); return open(k); }
+    if (S.req[k]) { acceptReq(k); sheet(0); return open(k); } // they had already asked us
+    S.out[k] = { name: (conns[k] && conns[k].peerName) || un, un, ts: Date.now() }; save(); list(); sheet(0); toast(t('reqSent') + ' @' + un);
+  }
+  $('#fg').onclick = async () => {
+    const un = $('#fk').value.trim().replace(/^@/, ''); if (srch) return;
+    if (!USERRE.test(un)) return $('#fs').textContent = t('badQuery'); const l = un.toLowerCase();
+    if (ME.user && ME.user.toLowerCase() === l) return $('#fs').textContent = t('yourOwn');
+    const find = o => Object.keys(o).find(k => (o[k].un || '').toLowerCase() === l);
+    const fk = find(S.c); if (fk) { sheet(0); return open(fk); }
+    if (find(S.out)) return $('#fs').textContent = t('reqAlready');
+    const rk = find(S.req); if (rk) { acceptReq(rk); sheet(0); return open(rk); }
+    if (!peer || peer.disconnected) return $('#fs').textContent = t('noNet');
+    $('#fs').textContent = t('searching'); $('#fg').disabled = 1; srch = { un: l, t: setTimeout(() => srch && nf(), 16000) };
+    const k = await dirLookup(l); if (!srch || srch.un !== l) return; if (!k || k === ME.key) return nf();
+    srch.key = k; if (on(k)) { const c = conns[k]; return (c.peerUser || '').toLowerCase() === l ? searchDone(k) : searchFail(k); } connect(k);
   };
-  function addContact(k) { if (!S.c[k]) S.c[k] = { name: k, u: 0, last: 0 }; save(); connect(k); sheet(0); open(k); }
-  $('#fa').onclick = () => { const q = $('#fk').value.trim().replace(/^@/, '').toUpperCase(); if (KEYRE.test(q)) addContact(q); };
+  // ---------- friend requests ----------
+  const frInfo = (c, h) => { const av = String(h.av || ''), cv = String(h.cv || ''), fc = String(h.fc || ''); return { name: noCtl(h.n, 30) || c.peerName || c.key, un: (USERRE.test(String(h.u || '')) ? String(h.u) : c.peerUser) || '', bio: noCtl(h.b, 140), pk: C.b64(c.pk), av: SG.okAv(av) ? av : '', cv: SG.okImg(cv, 60000) ? cv : '', fc: FCRE.test(fc) ? fc : '' }; };
+  function makeFriend(k, info) {
+    const o = { name: info.name || k, u: 0, last: 0, un: info.un || '', bio: info.bio || '', pk: info.pk }; ['av', 'cv', 'fc'].forEach(f => { if (info[f]) o[f] = info[f]; });
+    S.c[k] = o; if (info.pk) S.pins[k] = info.pk; delete S.req[k]; delete S.out[k]; delete S.dec[k]; save(); list(); return o;
+  }
+  function receiveRequest(c, h) {
+    const k = c.key; if (S.block[k]) return; const info = frInfo(c, h);
+    if (S.c[k]) return void sealTo(c, { t: 'fa' });
+    if (S.dec[k] && Date.now() - S.dec[k] < 6048e5) return void sealTo(c, { t: 'fd' }); // declined within the last week: answer quietly
+    if (S.out[k]) { makeFriend(k, info); sealTo(c, { t: 'fa' }); sealTo(c, profileHdr()); toast(t('friendAccepted') + info.name); return; } // both asked each other
+    if (!S.req[k] && Object.keys(S.req).length >= 50) return;
+    const first = !S.req[k]; S.req[k] = Object.assign(S.req[k] || { ts: Date.now() }, info); S.pins[k] = info.pk; save(); list();
+    if (first) notify(t('reqFrom'), info.name + (info.un ? ' @' + info.un : ''), '-');
+  }
+  function receiveAccept(c) {
+    const k = c.key, out = S.out[k]; if (S.c[k] && S.c[k].rq) { delete S.c[k].rq; save(); return sealTo(c, profileHdr()); } if (!out) return;
+    const o = makeFriend(k, { name: out.name || c.peerName, un: out.un || c.peerUser, pk: C.b64(c.pk) }); sealTo(c, profileHdr()); toast(t('friendAccepted') + o.name); notify(t('friendAccepted'), o.name, '-');
+  }
+  function receiveDecline(k) { if (S.out[k]) { delete S.out[k]; save(); list(); toast(t('friendDeclined')); } }
+  function acceptReq(k) { const r = S.req[k]; if (!r) return; makeFriend(k, r); if (on(k)) { sealTo(conns[k], { t: 'fa' }); sealTo(conns[k], profileHdr()); } else connect(k); }
+  function declineReq(k, blk) { if (on(k)) sealTo(conns[k], { t: 'fd' }); delete S.req[k]; S.dec[k] = Date.now(); if (blk) { S.block[k] = 1; try { conns[k] && conns[k].close(); } catch (e) {} } save(); list(); }
+  function renderReqs() {
+    const R = $('#reqs'); R.innerHTML = ''; const rk = Object.keys(S.req), ok_ = Object.keys(S.out); if (!rk.length && !ok_.length) return;
+    if (rk.length) { const hd = document.createElement('div'); hd.className = 'sec2'; hd.textContent = t('reqTitle') + ' (' + rk.length + ')'; R.append(hd); }
+    rk.forEach(k => { const q = S.req[k], r = document.createElement('div'); r.className = 'rq'; r.innerHTML = '<div class="av"></div><div class="mid"><b></b><span></span></div><div class="rqb"><button class="y"></button><button class="n"></button><button class="b"></button></div>';
+      avStyle(r.children[0], q.av, (q.name || '?')[0]); r.querySelector('b').textContent = q.name; r.querySelector('.mid span').textContent = (q.un ? '@' + q.un : '') + (q.bio ? ' · ' + q.bio : '');
+      const [y, n, b] = r.querySelectorAll('.rqb button'); y.textContent = t('frAccept'); n.textContent = t('frDecline'); b.textContent = t('frBlock');
+      y.onclick = () => acceptReq(k); n.onclick = () => declineReq(k); b.onclick = () => { if (confirm(t('confirmBlock'))) declineReq(k, true); }; R.append(r); });
+    ok_.forEach(k => { const q = S.out[k], r = document.createElement('div'); r.className = 'rq po'; r.innerHTML = '<div class="av"></div><div class="mid"><b></b><span></span></div><button class="x3">✕</button>';
+      avStyle(r.children[0], '', (q.un || q.name || '?')[0]); r.querySelector('b').textContent = '@' + (q.un || q.name); r.querySelector('.mid span').textContent = t('reqPending');
+      r.querySelector('.x3').onclick = () => { delete S.out[k]; save(); list(); }; R.append(r); });
+  }
+  // ---------- a friend reinstalled the app (new key, same @username): follow them ----------
+  const ROT_AFTER = () => window.__ROT_AFTER || 45000;
+  async function checkRotation() {
+    if (!peer || peer.disconnected) return;
+    for (const [k, o] of Object.entries(S.c)) {
+      if (!o.un || rot[k] || Date.now() - Math.max(act[k] || 0, seen[k] || 0, bootT) < ROT_AFTER()) continue;
+      const k2 = await dirLookup(o.un.toLowerCase()); if (k2 && k2 !== k && k2 !== ME.key && !S.c[k2] && !S.block[k2]) { rot[k] = k2; list(); if (cur === k) showRot(); toast('@' + o.un + ' ⚠'); }
+    }
+    for (const [k, q] of Object.entries(S.out)) { // a pending request whose target changed key
+      if (Date.now() - Math.max(act[k] || 0, seen[k] || 0, q.ts || 0, bootT) < ROT_AFTER()) continue;
+      const k2 = await dirLookup(q.un.toLowerCase()); if (k2 && k2 !== k && k2 !== ME.key && !S.out[k2] && !S.c[k2]) { S.out[k2] = q; delete S.out[k]; save(); connect(k2); list(); }
+    }
+  }
+  function showRot() { const b = $('#rotb'), k2 = cur && S.c[cur] && rot[cur]; b.hidden = !k2; if (k2) $('#rott').textContent = t('rotMsg').replace('{u}', S.c[cur].un || ''); }
+  async function acceptRot(k) {
+    const k2 = rot[k], o = S.c[k]; if (!k2 || !o) return;
+    try { conns[k] && conns[k].close(); } catch (e) {} await DB.rekeyChat(k, k2); const n = Object.assign({}, o); delete n.pk; n.rq = 1; S.c[k2] = n; delete S.c[k]; delete S.pins[k]; delete rot[k]; delete M[k]; delete conns[k];
+    if (cur === k) { cur = k2; M[k2] = await DB.chatMsgs(k2); } save(); connect(k2); list(); if (cur === k2) { drawHead(); draw(1); showRot(); }
+  }
+  $('#rota').onclick = () => acceptRot(cur);
+  // ---------- permanent username (chosen once) ----------
+  const userPending = () => $('#p-un').classList.contains('on') && !ME.user;
+  function askUser() { $('#uni').value = ''; $('#une').textContent = ''; $('#unok').disabled = false; sheet('un'); }
+  $('#unok').onclick = async () => {
+    const u = $('#uni').value.trim().replace(/^@/, ''); if (!USERRE.test(u)) return $('#une').textContent = t('userBad');
+    if (!confirm(t('onbConfirm') + ' @' + u + '؟')) return;
+    $('#unok').disabled = true; $('#une').textContent = t('searching'); const r = await claimUsername(u); $('#unok').disabled = false;
+    if (r === false) return $('#une').textContent = t('userTaken');
+    ME.user = u; await DB.set('me', ME); if (r === 'net') toast(t('userPending')); sheet(0); broadcastProfile(); drawMine(); list();
+  };
 
   // ---------- groups ----------
   const PERM_LBL = { send: 'permSend', media: 'permMedia', info: 'permInfo', add: 'permAdd' }, ROLE_ORD = { o: 0, a: 1, m: 2 };
@@ -724,7 +810,7 @@
   $('#cmu').onclick = $('#cmmu').onclick = toggleMute; $('#cmin').onclick = minimizeCall; $('#cmm').onclick = $('#cmv').onclick = restoreCall; $('#cme').onclick = endCall;
   function onIncomingCall(cl) {
     const k = peerKey(cl.peer);
-    if (!on(k) || call || pendingCall) { try { cl.close(); } catch (e) {} return; } // only authenticated contacts may ring us
+    if (!S.c[k] || !on(k) || call || pendingCall) { try { cl.close(); } catch (e) {} return; } // only authenticated friends may ring us
     pendingCall = cl; const video = !!(cl.metadata && cl.metadata.video);
     $('#inct').textContent = t('incoming') + nmOf(k, k); sheet('inc'); notify(t('incoming') + nmOf(k, k), '', '-');
     cl.on('close', () => { if (pendingCall === cl) { pendingCall = null; sheet(0); } });
@@ -733,23 +819,29 @@
   }
 
   // ---------- username directory: a 2nd PeerJS id "shilagram-u-<name>" answers lookups with our key (first come, first served while online) ----------
-  let dirPeer = null, dirName = null;
+  let dirPeer = null, dirName = null, dirBusy = false, dirFails = 0;
   function attachDir(p) {
     p.on('connection', c => c.on('open', () => { try { c.send({ t: 'ans', k: ME.key }); } catch (e) {} setTimeout(() => { try { c.close(); } catch (e) {} }, 2000); }));
-    p.on('disconnected', () => { try { p.reconnect(); } catch (e) {} }); p.on('error', () => {});
+    p.on('disconnected', () => setTimeout(() => { try { if (!p.destroyed) p.reconnect(); } catch (e) {} }, 2000));
+    const dead = () => { if (dirPeer === p) { dirPeer = null; dirName = null; } try { p.destroy(); } catch (e) {} }; // ensureDir() recreates it
+    p.on('error', e => { if (e.type !== 'peer-unavailable') dead(); }); p.on('close', dead);
   }
   function stopDir() { if (dirPeer) try { dirPeer.destroy(); } catch (e) {} dirPeer = null; dirName = null; }
   function claimUsername(u) {
     return new Promise(res => {
       if (!u) { stopDir(); return res(true); }
-      const un = u.toLowerCase(); if (dirPeer && dirName === un && !dirPeer.destroyed) return res(true);
+      const un = u.toLowerCase(); if (dirPeer && dirName === un && !dirPeer.destroyed && !dirPeer.disconnected) return res(true);
       let p; try { p = new Peer('shilagram-u-' + un, { config: { iceServers: iceServers() } }); } catch (e) { return res('net'); }
       let fin = 0; const end = v => { if (fin) return; fin = 1; clearTimeout(to); if (v === true) { stopDir(); dirPeer = p; dirName = un; attachDir(p); } else try { p.destroy(); } catch (e) {} res(v); };
-      const to = setTimeout(() => end('net'), 8000);
+      const to = setTimeout(() => end('net'), 9000);
       p.on('open', () => end(true)); p.on('error', e => end(e.type === 'unavailable-id' ? false : 'net'));
     });
   }
-  function ensureDir() { if (ME.user && (!dirPeer || dirPeer.destroyed)) claimUsername(ME.user); }
+  function ensureDir() { // keep our @username registered: reconnect or re-create after any failure (also retries while a ghost of a previous session expires)
+    if (!ME.user || dirBusy || !peer || peer.disconnected) return;
+    if (dirPeer && !dirPeer.destroyed) { if (dirPeer.disconnected) try { dirPeer.reconnect(); } catch (e) {} return; }
+    dirBusy = true; claimUsername(ME.user).then(r => { dirBusy = false; if (r === false) { if (++dirFails === 15) warn(t('userLost')); } else if (r === true) { if (dirFails >= 15) warn(0); dirFails = 0; } });
+  }
 
   // ---------- call recording (what you see + both voices), with a notice sent to the other side ----------
   let crec = null, recnT;
@@ -865,6 +957,7 @@
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
-  await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); setTimeout(ensureDir, 3000);
+  if (window.__DEBUG) window.__app = { S, conns, rot, seen, on, checkRotation, dirLookup, get dirPeer() { return dirPeer; } };
+  await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); if (!ME.user) setTimeout(askUser, 500);
   if (NATIVE && NATIVE.ready) try { NATIVE.ready(); } catch (e) {}
 })();

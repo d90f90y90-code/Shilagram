@@ -30,6 +30,12 @@
     const keys = await req(tx('msgs').index('chat').getAllKeys(chat)), s = tx('msgs', 'readwrite');
     keys.forEach(k => s.delete(k));
   }
+  async function rekeyChat(a, b) {
+    const ms = await chatMsgs(a);
+    return new Promise(r => { const t_ = db.transaction('msgs', 'readwrite'), st = t_.objectStore('msgs');
+      ms.forEach(m => { st.delete(m.id); m.chat = b; m.id = m.mid + ':' + b; if (m.f === a) m.f = b; if (m.p) m.p = m.p.map(x => x === a ? b : x); st.put(m); });
+      t_.oncomplete = () => r(); t_.onerror = () => r(); });
+  }
   const stickers = async () => (await req(tx('stickers').getAll())).sort((a, b) => b.ts - a.ts);
   const putSticker = s => req(tx('stickers', 'readwrite').put(s));
   const delSticker = id => req(tx('stickers', 'readwrite').delete(id));
@@ -59,5 +65,5 @@
     return { me: old.me, state };
   }
 
-  G.ShilaDB = { del, clearMsgs, getMsg, wipe, allStickers: stickers, init, get, set, putMsg, delMsg, chatMsgs, pendingMsgs, delChat, stickers, putSticker, delSticker, allMsgs, migrateLegacy };
+  G.ShilaDB = { rekeyChat, del, clearMsgs, getMsg, wipe, allStickers: stickers, init, get, set, putMsg, delMsg, chatMsgs, pendingMsgs, delChat, stickers, putSticker, delSticker, allMsgs, migrateLegacy };
 })(window);
