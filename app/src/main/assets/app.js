@@ -204,6 +204,7 @@
         if (h.r) m.r = String(h.r).slice(0, 20);
         if (cur !== id) o.u = (o.u || 0) + 1;
         await addMsg(id, m);
+        shAuto(m, id);
         notify(t('msgFrom') + nmOf(id, k), pvText(m), id);
       }
       sealTo(c, { t: 'a', i: mid, g: h.g });
@@ -282,7 +283,7 @@
       if (m.r && !m.del) { const q = getM(cur, m.r); const rp = document.createElement('div'); rp.className = 'rp'; rp.textContent = q ? pvText(q) : '…'; b.append(rp); }
       if (m.del) { const s = document.createElement('span'); s.textContent = t('deleted'); b.append(s); }
       else if (m.kind === 'st' && m.b) { const im = document.createElement('img'); im.className = 'st'; im.src = url(m.b); if (!m.me) im.onclick = () => { if (confirm(t('saveSt'))) saveSticker(m.b); }; b.append(im); }
-      else if (m.kind === 'img' && m.b) { const im = document.createElement('img'); im.className = 'ph'; im.src = url(m.b); b.append(im); }
+      else if (m.kind === 'img' && m.b) { const im = document.createElement('img'); im.className = 'ph'; im.src = url(m.b); im.onclick = () => openChatPhoto(m); b.append(im); }
       else if (m.kind === 'vo' && m.b) { const a = document.createElement('audio'); a.controls = true; a.preload = 'metadata'; a.src = url(m.b); b.append(a); }
       else if (m.kind === 'file' && m.b) { const f = document.createElement('div'); f.className = 'fl'; f.innerHTML = '<span>📎</span><u></u>'; f.lastChild.textContent = (m.name || 'file') + ' (' + Math.ceil(m.b.size / 1024) + ' KB)'; f.onclick = () => saveBlob(m); b.append(f); }
       else if (m.kind !== 't' && !m.b) { const s = document.createElement('span'); s.textContent = t('mediaGone'); s.style.opacity = '.6'; b.append(s); }
@@ -325,13 +326,13 @@
   // ---------- sheets ----------
   function sheet(n) { if (n !== 'inc') pendingGroup = null; $('#x').style.display = n === 'un' ? 'none' : ''; $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
   const closeSheet = () => { if (userPending()) return; sheet(0); };
-  window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if ($('#call').classList.contains('on') && !$('#call').classList.contains('min')) { minimizeCall(); return 1; } if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
+  window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if ($('#shv').classList.contains('on')) { vClose(); return 1; } if ($('#call').classList.contains('on') && !$('#call').classList.contains('min')) { minimizeCall(); return 1; } if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
   $('#x').onclick = closeSheet; $('#sh').onclick = e => { if (e.target.id === 'sh') closeSheet(); };
 
   // ---------- pages ----------
   const pgStack = [], PG_ON = {};
   function showPage(n) { const el = $('#pg-' + n); if (!el || pgStack[pgStack.length - 1] === n) return; pgStack.push(n); el.style.zIndex = 10 + pgStack.length; el.classList.add('on'); if (PG_ON[n]) PG_ON[n](); }
-  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'dl' || n === 'gmedia') dlClear(); }
+  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'dl' || n === 'gmedia') dlClear(); if (n === 'shfc' && pgStack[pgStack.length - 1] === 'shf') renderShf(); }
   $$('[data-pg]').forEach(b => b.onclick = () => showPage(b.dataset.pg)); $$('.pback').forEach(b => b.onclick = closePage);
   const svgUri = x => 'data:image/svg+xml,' + encodeURIComponent(x);
   const DEF_AV = svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#d9cdf0"/><circle cx="100" cy="78" r="38" fill="#7a65a8"/><path d="M28 200c0-42 32-72 72-72s72 30 72 72z" fill="#7a65a8"/></svg>');
@@ -1016,7 +1017,7 @@
       clearInterval(iv); try { ac.close(); } catch (e) {}
       const mime = (r.mimeType || 'video/webm').split(';')[0], b = new Blob(chunks, { type: mime }); if (!b.size) return;
       const id = rid(8), name = 'shilagram-call-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + (mime.includes('mp4') ? '.mp4' : '.webm');
-      await DB.set('rec:' + id, b); S.recs.unshift({ id, name, ts: Date.now(), k, size: b.size, mime }); save(); toast(t('recSaved'));
+      await DB.set('rec:' + id, b); S.recs.unshift({ id, name, ts: Date.now(), k, size: b.size, mime }); save(); toast(t('recSaved')); shAutoRec(b, name);
     };
     r.start(1000); crec = { r, k }; $('#crec').classList.add('on'); $('#rect').classList.add('on');
   }
@@ -1025,6 +1026,141 @@
     try { c.r.stop(); } catch (e) {} if (on(c.k)) sealTo(conns[c.k], { t: 'rec', on: 0 });
   }
   $('#crec').onclick = toggleRec;
+
+  // ---------- Sh-Fill: media folder on the phone + full-screen viewer ----------
+  const SH_CATS = [['img', 'shfImg', 'image'], ['vid', 'shfVid', 'video'], ['aud', 'shfAud', 'mic'], ['scr', 'shfScr', 'screen']];
+  const SH_MIMEX = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'video/webm': 'webm', 'video/mp4': 'mp4' };
+  const SH_IMG = /\.(jpe?g|png|webp|gif|bmp|heic|heif|avif)$/i, SH_VID = /\.(mp4|webm|mkv|mov|3gp|avi|m4v)$/i, SH_AUD = /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|amr)$/i;
+  let shCat = 'img', shBusy = 0, shQ = Promise.resolve();
+  const shHas = () => !!(NATIVE && NATIVE.shAccess);
+  const shOk = () => shHas() && NATIVE.shAccess();
+  const shEnq = fn => { const p = shQ.then(fn); shQ = p.catch(() => {}); return p; }; // one write at a time
+  const shSrc = (k, n) => '/shfill/' + k + '/' + encodeURIComponent(n);
+  const shList = k => { try { return JSON.parse(NATIVE.shList(k) || '[]'); } catch (e) { return []; } };
+  function shCatOf(m) { return m.kind === 'img' ? 'img' : m.kind === 'vo' ? 'aud' : m.kind === 'file' ? (SH_IMG.test(m.name || '') ? 'img' : SH_VID.test(m.name || '') ? 'vid' : SH_AUD.test(m.name || '') ? 'aud' : null) : null; }
+  function shName(m, chatId) {
+    const o = ch(chatId) || {}, d = new Date(m.ts), p = n => String(n).padStart(2, '0');
+    if (m.kind === 'file') { const nm = m.name || 'file', dot = nm.lastIndexOf('.'); return (dot > 0 ? nm.slice(0, dot) : nm) + '_' + m.mid + (dot > 0 ? nm.slice(dot) : ''); }
+    const ds = d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+    return (o.name || 'chat') + '_' + ds + '_' + m.mid + '.' + (SH_MIMEX[m.mime] || (m.kind === 'vo' ? 'webm' : 'jpg'));
+  }
+  // write a Blob into Sh-Fill/<category>/<name> in 768 KB pieces; resolves to the final name, 'exists', or ''
+  async function shPut(k, name, blob) {
+    if (!shOk() || !blob || !blob.size) return '';
+    const CH = 786432; let fin = '';
+    for (let i = 0, first = true; i < blob.size; i += CH, first = false) {
+      const r = NATIVE.shWrite(k, name, await blobB64(blob.slice(i, i + CH)), first);
+      if (!r) return ''; if (r === 'exists') return 'exists'; fin = r;
+    }
+    return NATIVE.shDone(k, fin) ? fin : '';
+  }
+  async function shEnsure() {
+    if (!shHas()) { toast(t('shfNoApp')); return false; }
+    if (NATIVE.shAccess()) { NATIVE.shInit(); return true; }
+    if (confirm(t('shfNeed'))) NATIVE.shRequest();
+    return false;
+  }
+  function shAuto(m, chatId) { try { const k = shCatOf(m); if (S.set.shf && k && m.b && shOk()) shEnq(() => shPut(k, shName(m, chatId), m.b)).catch(() => {}); } catch (e) {} }
+  function shAutoRec(b, name) { try { if (S.set.shf && shOk()) shEnq(() => shPut('scr', name, b)).catch(() => {}); } catch (e) {} }
+  async function shSync(btn) {
+    if (shBusy || !(await shEnsure())) return; shBusy = 1; let n = 0, i = 0; const lbl = btn.textContent;
+    try {
+      const jobs = (await DB.allMsgs()).filter(m => m.b && !m.del && shCatOf(m)).map(m => [shCatOf(m), shName(m, m.chat), m.b]);
+      for (const rc of S.recs) { const b = await DB.get('rec:' + rc.id); if (b) jobs.push(['scr', rc.name, b]); }
+      for (const [k, name, b] of jobs) { btn.textContent = '⏳ ' + (++i) + '/' + jobs.length; const r = await shEnq(() => shPut(k, name, b)); if (r && r !== 'exists') n++; }
+    } catch (e) {} finally { shBusy = 0; btn.textContent = lbl; }
+    toast(t('shfSynced').replace('{n}', n)); if ($('#pg-shf').classList.contains('on')) renderShf();
+  }
+  function renderShf() {
+    const B = $('#shfb'); B.innerHTML = '';
+    const box = (cls, pad) => { const d = document.createElement('div'); d.className = cls; if (pad) d.style.padding = pad; B.append(d); return d; }, mk = (cls, txt) => { const b = document.createElement('button'); b.className = cls; b.textContent = txt; return b; };
+    if (!shHas()) { box('empty').textContent = t('shfNoApp'); return; }
+    const pp = box('pp'), p1 = document.createElement('p'), p2 = document.createElement('p'); p1.textContent = t('shfInfo'); p2.textContent = NATIVE.shRoot() + '/'; p2.style.cssText = 'direction:ltr;text-align:start;font-family:monospace;font-size:12px;opacity:.75'; pp.append(p1, p2);
+    const sl = box('sl', '6px 22px');
+    if (!NATIVE.shAccess()) { const g = mk('wb', t('shfGrant')); g.onclick = () => NATIVE.shRequest(); sl.append(g); return; }
+    NATIVE.shInit();
+    const tg = mk('tg', (S.set.shf ? '✅ ' : '⬜ ') + t('shfAuto')); tg.onclick = () => { S.set.shf = S.set.shf ? 0 : 1; save(); renderShf(); };
+    const sy = mk('wb', t('shfSync')); sy.onclick = () => shSync(sy); sl.append(tg, sy);
+    SH_CATS.forEach(([k, lbl, ic]) => {
+      const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"><svg class="ic"><use href="#i-' + ic + '"/></svg></div><div class="mid"><b></b><span></span></div>';
+      r.querySelector('b').textContent = t(lbl); r.querySelector('.mid span').textContent = shList(k).length + ' ' + t('shfFiles'); r.onclick = () => { shCat = k; showPage('shfc'); }; B.append(r);
+    });
+  }
+  PG_ON.shf = renderShf;
+  function renderCat() {
+    const k = shCat, L = $('#shfl'); L.innerHTML = ''; $('#shfct').textContent = t(SH_CATS.find(c => c[0] === k)[1]);
+    const files = shHas() && NATIVE.shAccess() ? shList(k) : [];
+    if (!files.length) { L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg></div>'; L.firstChild.append(t('shfEmpty')); return; }
+    const kind = k === 'img' ? 'img' : k === 'aud' ? 'aud' : 'vid';
+    const items = files.map(f => ({ kind, src: shSrc(k, f.name), name: f.name, del: async () => NATIVE.shDelete(k, f.name) }));
+    if (kind === 'aud') {
+      files.forEach((f, i) => { const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"><svg class="ic"><use href="#i-mic"/></svg></div><div class="mid"><b></b><span></span></div>';
+        r.querySelector('b').textContent = f.name; r.querySelector('.mid span').textContent = Math.ceil(f.size / 1024) + ' KB · ' + new Date(f.ts).toLocaleDateString(I18N.lang); r.onclick = () => vOpen(items, i); L.append(r); });
+      return;
+    }
+    const g = document.createElement('div'); g.className = 'shg'; L.append(g);
+    files.forEach((f, i) => {
+      const c = document.createElement('div'); c.className = 'c';
+      if (kind === 'img') { const im = new Image(); im.loading = 'lazy'; im.decoding = 'async'; im.src = items[i].src; c.append(im); }
+      else { const v = document.createElement('video'); v.preload = 'metadata'; v.muted = true; v.playsInline = true; v.src = items[i].src + '#t=0.1'; c.append(v); const pl = document.createElement('span'); pl.className = 'pl'; pl.textContent = '▶'; c.append(pl); }
+      c.onclick = () => vOpen(items, i); g.append(c);
+    });
+  }
+  PG_ON.shfc = renderCat;
+  $('#shfadd').onclick = async () => { if (!(await shEnsure())) return; const inp = $('#shin'); inp.accept = shCat === 'img' ? 'image/*' : shCat === 'aud' ? 'audio/*' : 'video/*'; inp.click(); };
+  $('#shin').onchange = async e => {
+    const fs = [...e.target.files]; e.target.value = ''; if (!fs.length) return; let n = 0, i = 0; const k = shCat;
+    for (const f of fs) {
+      toast(++i + '/' + fs.length); const name = f.name || ('file-' + Date.now());
+      let r = await shEnq(() => shPut(k, name, f)); if (r === 'exists') r = await shEnq(() => shPut(k, Date.now().toString(36) + '_' + name, f)); if (r && r !== 'exists') n++;
+    }
+    toast(t('shfImported').replace('{n}', n)); if ($('#pg-shfc').classList.contains('on')) renderCat();
+  };
+  window.__shfPerm = () => { if ($('#pg-shf').classList.contains('on')) renderShf(); };
+
+  // full-screen viewer: pinch / double-tap zoom, drag, swipe or arrows between items, native video/audio controls
+  const V = { items: [], i: 0, s: 1, x: 0, y: 0, rev: [] }, vPtr = new Map(); let vD0 = 0, vS0 = 1, vSt = null, vTap = 0;
+  const vApply = () => { const im = $('#shvi'); if (im) im.style.transform = 'translate(' + V.x + 'px,' + V.y + 'px) scale(' + V.s + ')'; };
+  const vDist = () => { const [a, b] = [...vPtr.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+  function vShow(i) {
+    const it = V.items[V.i = i], st = $('#shvs'); st.innerHTML = ''; V.s = 1; V.x = V.y = 0; vPtr.clear(); vSt = null; let el;
+    if (it.kind === 'img') { el = new Image(); el.id = 'shvi'; el.draggable = false; }
+    else { el = document.createElement(it.kind === 'vid' ? 'video' : 'audio'); el.controls = true; el.autoplay = true; el.playsInline = true; }
+    el.src = it.src; st.append(el);
+    $('#shvt').textContent = it.name || ''; $('#shvn').textContent = (i + 1) + '/' + V.items.length;
+    $('#shvp').style.display = i > 0 ? '' : 'none'; $('#shvx').style.display = i < V.items.length - 1 ? '' : 'none';
+    $('#shvd').style.display = it.del ? '' : 'none'; $('#shva').style.display = it.save ? '' : 'none'; $('#shva').textContent = it.save ? '⬇ ' + t('shfSave') : '';
+  }
+  function vOpen(items, i, rev) { V.items = items; V.rev = rev || []; $('#shv').classList.add('on'); vShow(i); }
+  function vClose() { $('#shv').classList.remove('on'); $('#shvs').innerHTML = ''; V.rev.forEach(u => URL.revokeObjectURL(u)); V.rev = []; V.items = []; }
+  const vGo = d => { const n = V.i + d; if (n >= 0 && n < V.items.length) vShow(n); };
+  $('#shvc').onclick = vClose; $('#shvp').onclick = () => vGo(-1); $('#shvx').onclick = () => vGo(1);
+  $('#shva').onclick = async () => { const it = V.items[V.i]; if (!it || !it.save || !(await shEnsure())) return; const r = await shEnq(() => it.save()); toast(r === 'exists' ? t('shfExists') : r ? t('shfSaved') : '✗'); };
+  $('#shvd').onclick = async () => {
+    const it = V.items[V.i]; if (!it || !it.del || !confirm(t('shfDel'))) return;
+    if (!(await it.del())) return toast('✗'); V.items.splice(V.i, 1);
+    if (!V.items.length) vClose(); else vShow(Math.min(V.i, V.items.length - 1));
+    if ($('#pg-shfc').classList.contains('on')) renderCat();
+  };
+  const vStg = $('#shvs');
+  vStg.onpointerdown = e => { if (!$('#shvi')) return; vStg.setPointerCapture(e.pointerId); vPtr.set(e.pointerId, { x: e.clientX, y: e.clientY }); vS0 = V.s; if (vPtr.size === 2) vD0 = vDist(); vSt = { x: e.clientX, y: e.clientY, t: Date.now() }; };
+  vStg.onpointermove = e => {
+    const p = vPtr.get(e.pointerId); if (!p) return; const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+    if (vPtr.size === 2) V.s = Math.min(6, Math.max(1, vS0 * vDist() / vD0)); else if (V.s > 1) { V.x += dx; V.y += dy; }
+    const r = vStg.getBoundingClientRect(), mx = (V.s - 1) * r.width / 2, my = (V.s - 1) * r.height / 2; V.x = Math.min(mx, Math.max(-mx, V.x)); V.y = Math.min(my, Math.max(-my, V.y)); vApply();
+  };
+  vStg.onpointerup = vStg.onpointercancel = e => {
+    if (!vPtr.delete(e.pointerId) || !vSt) return; if (vPtr.size) { vSt = null; return; }
+    const dx = e.clientX - vSt.x, dy = e.clientY - vSt.y, dt = Date.now() - vSt.t; vSt = null;
+    if (V.s === 1 && Math.abs(dx) > 60 && Math.abs(dy) < 60 && dt < 600) vGo(dx < 0 ? 1 : -1);
+    else if (Math.abs(dx) < 8 && Math.abs(dy) < 8 && dt < 300) { if (Date.now() - vTap < 300) { V.s = V.s > 1 ? 1 : 2.5; V.x = V.y = 0; vApply(); vTap = 0; } else vTap = Date.now(); }
+  };
+  // tapping a photo in a chat opens it full screen (all photos of that chat), with a "save to Sh-Fill" action
+  function openChatPhoto(m) {
+    const imgs = (M[cur] || []).filter(x => x.kind === 'img' && x.b && !x.del), rev = [], chatId = cur;
+    const items = imgs.map(x => { const u = URL.createObjectURL(x.b); rev.push(u); return { kind: 'img', src: u, name: nmOf(chatId, x.f) + ' · ' + new Date(x.ts).toLocaleString(I18N.lang), save: () => shPut('img', shName(x, chatId), x.b) }; });
+    vOpen(items, Math.max(0, imgs.indexOf(m)), rev);
+  }
 
   // ---------- app lock ----------
   let padRes = null, padBuf = '', fails = 0, waitUntil = 0, lockedNow = false;

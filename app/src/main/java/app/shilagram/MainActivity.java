@@ -30,7 +30,7 @@ import java.util.List;
 
 public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
-    static final int RQ_FILE = 1, RQ_SAVE = 2, RQ_PERM = 3, RQ_NOTIF = 4, RQ_SCREEN = 5;
+    static final int RQ_FILE = 1, RQ_SAVE = 2, RQ_PERM = 3, RQ_NOTIF = 4, RQ_SCREEN = 5, RQ_STORAGE = 6;
     WebView web;
     ValueCallback<Uri[]> fcb;
     PermissionRequest pendingPerm;
@@ -58,7 +58,10 @@ public class MainActivity extends Activity {
             .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this)).build();
         web.setWebViewClient(new WebViewClient() {
             @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
-                return loader.shouldInterceptRequest(r.getUrl());
+                Uri u = r.getUrl();
+                if (HOST.equals(u.getHost()) && u.getPath() != null && u.getPath().startsWith("/shfill/"))
+                    return ShFill.serve(MainActivity.this, u, r.getRequestHeaders());
+                return loader.shouldInterceptRequest(u);
             }
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 return !HOST.equals(r.getUrl().getHost()); // never navigate away from the app
@@ -157,6 +160,24 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void stopScreenShare() {
             runOnUiThread(() -> { try { startService(new Intent(MainActivity.this, ScreenShareService.class).setAction("stop")); } catch (Exception e) { } });
         }
+        // ---- Sh-Fill: visible folder on the phone ----
+        @JavascriptInterface public boolean shAccess() { return ShFill.access(MainActivity.this); }
+        @JavascriptInterface public boolean shInit() { return ShFill.init(MainActivity.this); }
+        @JavascriptInterface public String shRoot() { return ShFill.root().getAbsolutePath(); }
+        @JavascriptInterface public String shWrite(String key, String name, String b64, boolean first) { return ShFill.write(MainActivity.this, key, name, b64, first); }
+        @JavascriptInterface public boolean shDone(String key, String name) { return ShFill.done(MainActivity.this, key, name); }
+        @JavascriptInterface public String shList(String key) { return ShFill.list(MainActivity.this, key); }
+        @JavascriptInterface public boolean shDelete(String key, String name) { return ShFill.delete(MainActivity.this, key, name); }
+        @JavascriptInterface public void shRequest() {
+            runOnUiThread(() -> {
+                try {
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        try { startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName()))); }
+                        catch (Exception e) { startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)); }
+                    } else requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE}, RQ_STORAGE);
+                } catch (Exception e) { /* no settings screen available */ }
+            });
+        }
         @JavascriptInterface public void batterySettings() {
             runOnUiThread(() -> { try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); } catch (Exception e) { } });
         }
@@ -189,7 +210,12 @@ public class MainActivity extends Activity {
         }
     }
 
+    void jsShfPerm() { web.post(() -> web.evaluateJavascript("window.__shfPerm&&window.__shfPerm()", null)); }
+
+    @Override protected void onResume() { super.onResume(); if (web != null) jsShfPerm(); }
+
     @Override public void onRequestPermissionsResult(int rq, String[] perms, int[] res) {
+        if (rq == RQ_STORAGE) { jsShfPerm(); return; }
         if (rq == RQ_PERM && pendingPerm != null) {
             boolean ok = res.length > 0;
             for (int g : res) if (g != PackageManager.PERMISSION_GRANTED) ok = false;
