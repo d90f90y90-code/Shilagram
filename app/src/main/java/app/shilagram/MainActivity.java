@@ -12,6 +12,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -29,7 +30,7 @@ import java.util.List;
 
 public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
-    static final int RQ_FILE = 1, RQ_SAVE = 2, RQ_PERM = 3, RQ_NOTIF = 4;
+    static final int RQ_FILE = 1, RQ_SAVE = 2, RQ_PERM = 3, RQ_NOTIF = 4, RQ_SCREEN = 5;
     WebView web;
     ValueCallback<Uri[]> fcb;
     PermissionRequest pendingPerm;
@@ -147,6 +148,15 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void notifSettings() {
             runOnUiThread(() -> { try { startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())); } catch (Exception e) { } });
         }
+        @JavascriptInterface public void startScreenShare() {
+            runOnUiThread(() -> {
+                try { startActivityForResult(((MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE)).createScreenCaptureIntent(), RQ_SCREEN); }
+                catch (Exception e) { jsStopped(); }
+            });
+        }
+        @JavascriptInterface public void stopScreenShare() {
+            runOnUiThread(() -> { try { startService(new Intent(MainActivity.this, ScreenShareService.class).setAction("stop")); } catch (Exception e) { } });
+        }
         @JavascriptInterface public void batterySettings() {
             runOnUiThread(() -> { try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); } catch (Exception e) { } });
         }
@@ -156,7 +166,19 @@ public class MainActivity extends Activity {
         web.evaluateJavascript("(function(){return window.__back?window.__back():0})()", v -> { if (!"1".equals(v)) finish(); });
     }
 
+    void jsStopped() { web.post(() -> web.evaluateJavascript("window.__screenStopped&&window.__screenStopped()", null)); }
+
     @Override protected void onActivityResult(int rq, int rs, Intent d) {
+        if (rq == RQ_SCREEN) {
+            if (rs == RESULT_OK && d != null) {
+                ScreenShareService.sink = new ScreenShareService.Sink() {
+                    @Override public void onFrame(String b64) { web.post(() -> web.evaluateJavascript("window.__screenFrame&&window.__screenFrame('" + b64 + "')", null)); }
+                    @Override public void onStopped() { jsStopped(); }
+                };
+                try { startForegroundService(new Intent(this, ScreenShareService.class).putExtra("rc", rs).putExtra("data", d)); } catch (Exception e) { jsStopped(); }
+            } else jsStopped();
+            return;
+        }
         if (rq == RQ_FILE && fcb != null) { fcb.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(rs, d)); fcb = null; }
         else if (rq == RQ_SAVE && pendData != null) {
             if (rs == RESULT_OK && d != null && d.getData() != null) {

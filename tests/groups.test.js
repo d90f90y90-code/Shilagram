@@ -45,3 +45,17 @@ test('owner-signed snapshot verifies; forged or edited ones do not', async () =>
   assert.equal(await C.verifyRaw(owner.pub, sig, enc.encode(raw.replace('"G"', '"H"'))), false);
   assert.equal(await C.verifyRaw(owner.pub, await C.signRaw(evil.priv, enc.encode(raw)), enc.encode(raw)), false);
 });
+
+test('group look: assistant can set description / frame / cover / gif, ordinary member cannot', () => {
+  const g = SG.applyOp(base(), O, { a: 'role', k: A, v: 'a' }), H = 'a'.repeat(32);
+  for (const op of [{ a: 'ds', v: 'وصف' }, { a: 'fc', v: '#aabbcc' }, { a: 'cv', h: H }, { a: 'gf', h: H }]) { assert.ok(SG.applyOp(g, A, op)); assert.equal(SG.applyOp(g, M, op), null); }
+  const n = SG.applyOp(SG.applyOp(g, A, { a: 'cv', h: H }), O, { a: 'ds', v: 'x'.repeat(500) }); assert.equal(n.cvh, H); assert.equal(n.ds.length, 300);
+  assert.equal(SG.applyOp(g, A, { a: 'cv', h: 'zz' }), null); assert.equal(SG.applyOp(g, A, { a: 'fc', v: 'red' }), null);
+  assert.ok(!SG.applyOp(SG.applyOp(g, A, { a: 'cv', h: H }), A, { a: 'cv', h: '' }).cvh);
+});
+test('validState keeps the new look fields and rejects bad ones', () => {
+  const H = 'b'.repeat(32), s = SG.validState(Object.assign(base(), { fc: '#112233', ds: 'hello', cvh: H, gfh: H }));
+  assert.equal(s.fc, '#112233'); assert.equal(s.ds, 'hello'); assert.equal(s.cvh, H); assert.equal(s.gfh, H);
+  assert.equal(SG.validState(Object.assign(base(), { cvh: 'nothex' })), null); assert.equal(SG.validState(Object.assign(base(), { fc: 'javascript:1' })), null);
+  assert.deepEqual(Object.keys(SG.canon(s)).slice(-4), ['fc', 'ds', 'cvh', 'gfh']);
+});

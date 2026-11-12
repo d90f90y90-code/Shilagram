@@ -147,3 +147,23 @@ img{-webkit-user-drag:none;user-drag:none}
 .rqb{display:flex;gap:6px;width:100%;padding-inline-start:58px}.rqb button{flex:1;padding:9px 6px;border-radius:8px;font-weight:700;background:var(--bg2);color:var(--ink)}.rqb .y{background:var(--pri);color:#fff}.rqb .b{color:var(--red)}
 .rq.po{opacity:.85}.rq.po .x3{background:none;color:var(--mut);font-size:18px;padding:6px 10px}
 .rotb{background:#b45309;color:#fff;padding:10px 12px;display:flex;gap:10px;align-items:center;font-size:14px;line-height:1.6}.rotb[hidden]{display:none}.rotb span{flex:1}.rotb button{background:#fff;color:#7c2d12;border-radius:6px;padding:7px 10px;font-weight:800}
+
+/* ===== group page (design by the user): cover + framed photo, tool row, members | description + animated picture ===== */
+.gcov{height:240px;background:#0a0716 center/cover no-repeat;position:relative;display:grid;place-items:center}
+.gcov .gb{position:absolute;top:12px;inset-inline-start:12px;background:#0008;color:#fff;border-radius:50%;width:42px;height:42px;display:grid;place-items:center;z-index:2}
+.gpav{width:150px;height:150px;border-width:9px;font-size:60px;box-shadow:0 6px 22px #000a}
+.gname{position:absolute;bottom:8px;left:12px;right:12px;text-align:center;color:#fff;text-shadow:0 1px 5px #000;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gtool{display:flex;background:var(--hd);border-block:2px solid #e9c46a66;padding:8px 2px;position:sticky;top:0;z-index:3}
+.gtool button{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--acc);font-size:12px;padding:5px 0;background:none;min-width:0}.gtool button .ic{width:26px;height:26px}.gtool button span{white-space:nowrap;color:var(--ink)}.gtool button[hidden]{display:none}
+.gcols{display:flex;min-height:340px}.gc1{flex:1.15;border-inline-end:2px solid #e9c46a55;min-width:0}.gc2{flex:1;display:flex;flex-direction:column;min-width:0}
+.gh{padding:13px 10px;font-size:17px;font-weight:800;border-bottom:2px solid #e9c46a55;text-align:center}
+.gdesc{border-bottom:2px solid #e9c46a55;min-height:120px}.gdesc p{padding:10px 12px;color:var(--acc);line-height:1.9;word-break:break-word;text-align:center;margin:0;white-space:pre-wrap}
+.ggif{margin:16px auto;width:80%;aspect-ratio:3/4;border:5px solid var(--ink);border-radius:4px;background:var(--bg2) center/cover no-repeat;display:grid;place-items:center;color:var(--mut);font-size:13px;text-align:center}
+.gmr{display:flex;align-items:center;gap:10px;padding:10px;border-bottom:1px solid var(--ln)}.gmr .av{width:48px;height:48px;border:3px solid var(--ink);flex:none}.gmr .mid{flex:1;min-width:0}.gmr .mid b{display:block;color:var(--acc);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gmr .mid span{font-size:12px;color:var(--mut);display:block}
+.own{font-size:11px;color:var(--acc);display:flex;align-items:center;gap:3px;white-space:nowrap}.own .ic{width:14px;height:14px;fill:currentColor;stroke:none}
+.flash{animation:fl 1.6s}@keyframes fl{0%,60%{box-shadow:0 0 0 3px var(--acc)}100%{box-shadow:none}}
+/* group call tiles */
+#gtiles{display:none;width:100%;flex:1;min-height:0;padding:70px 10px 6px;gap:8px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));grid-auto-rows:minmax(140px,1fr);overflow:auto;align-content:center}
+#call.grp #gtiles{display:grid}#call.grp #rv,#call.grp #lv{display:none!important}
+.tile{position:relative;background:#111827;border-radius:14px;overflow:hidden;min-height:140px}.tile video{width:100%;height:100%;object-fit:cover;display:block}.tile .ph{position:absolute;inset:0;display:none;place-items:center;font-size:54px;color:#fff;background:#4c2f8c}.tile.nov .ph{display:grid}.tile.nov video{opacity:0}.tile span{position:absolute;bottom:6px;inset-inline-start:8px;color:#fff;font-size:13px;text-shadow:0 1px 3px #000;background:#0006;padding:1px 8px;border-radius:10px}
+#call .ctl{flex-wrap:wrap;justify-content:center;padding-inline:10px}#call .ctl button{width:56px;height:56px}#call .ctl button .ic{width:24px;height:24px}#call .ctl button.on{background:var(--pri)}#call .ctl button.off{background:#7f1d1d}#call .ctl button[hidden]{display:none}

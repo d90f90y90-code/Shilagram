@@ -68,6 +68,9 @@
   async function signRaw(privJwk, bytes) { return new Uint8Array(await subtle.sign(SIG, await loadPriv(privJwk), gData(bytes))); }
   async function verifyRaw(pubRaw, sig, bytes) { try { return await subtle.verify(SIG, await loadPub(pubRaw), sig, gData(bytes)); } catch (e) { return false; } }
 
+  // content address for shared assets (first 128 bits of SHA-256)
+  async function sha32(text) { return hex(new Uint8Array(await subtle.digest('SHA-256', enc.encode(text)))).slice(0, 32); }
+
   // ---- app-lock PIN hash (PBKDF2) ----
   async function pinHash(pin, saltB64) {
     const base = await subtle.importKey('raw', enc.encode(String(pin)), 'PBKDF2', false, ['deriveBits']);
@@ -88,5 +91,5 @@
     return dec.decode(await subtle.decrypt({ name: 'AES-GCM', iv: unb64(o.i) }, await pbKey(pass, unb64(o.s)), unb64(o.d)));
   }
 
-  G.ShilaCrypto = { pinHash, signRaw, verifyRaw, lock, unlock, newIdentity, fingerprint, newHello, sign, verify, deriveKey, seal, open, b64, unb64, rnd, cat };
+  G.ShilaCrypto = { sha32, pinHash, signRaw, verifyRaw, lock, unlock, newIdentity, fingerprint, newHello, sign, verify, deriveKey, seal, open, b64, unb64, rnd, cat };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

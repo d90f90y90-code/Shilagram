@@ -72,3 +72,8 @@ test('pin hash is deterministic per salt and differs for other PINs/salts', asyn
   assert.notEqual(await C.pinHash('1234', s1), await C.pinHash('1235', s1));
   assert.notEqual(await C.pinHash('1234', s1), await C.pinHash('1234', s2));
 });
+
+test('content address is stable, 32 hex chars, and changes with content', async () => {
+  const a = await C.sha32('data:image/gif;base64,AAA'), b = await C.sha32('data:image/gif;base64,AAB');
+  assert.match(a, /^[a-f0-9]{32}$/); assert.equal(a, await C.sha32('data:image/gif;base64,AAA')); assert.notEqual(a, b);
+});

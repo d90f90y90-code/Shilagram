@@ -13,7 +13,7 @@
   // ---------- state ----------
   await DB.init();
   let ME = await DB.get('me'), ID = await DB.get('identity'), S = (await DB.get('state')) || { c: {}, g: {}, ice: '', lang: '' };
-  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.req = S.req || {}; S.out = S.out || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
+  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
   I18N.set(S.lang || I18N.detect());
   if (!ME) {
     const mig = await DB.migrateLegacy();
@@ -158,16 +158,31 @@
       if (g.owner === k && g.pend && g.pend.length) { const ops = g.pend; g.pend = []; save(); for (const op of ops) await sealTo(c, { t: 'gop', g: id, op }); }
     }
     for (const m of await DB.pendingMsgs()) if (m.p.includes(k) && (m.chat === k || (S.g[m.chat] && S.g[m.chat].mem[k]))) await sendMsgTo(c, m.chat, m);
-    list(); if (cur) drawHead();
+    wantAssets(); list(); if (cur) drawHead();
   }
   async function handlePlain(c, h, bin) {
     const k = c.key;
     if (h.t === 'fr') return receiveRequest(c, h);
     if (h.t === 'fa') return receiveAccept(c);
     if (h.t === 'fd') return receiveDecline(k);
-    if (!S.c[k] && !['gs', 'gop', 'm', 'a', 'd', 'ed'].includes(h.t)) return; // non-friends may only take part in shared groups
+    if (!S.c[k] && !['gs', 'gop', 'm', 'a', 'd', 'ed', 'gci', 'gcj', 'gar', 'gad', 'shr'].includes(h.t)) return; // non-friends may only take part in shared groups
     if (h.t === 'gs') await receiveState(c, h);
-    else if (h.t === 'gop') { const g = S.g[h.g]; if (g && g.owner === ME.key) { const ns = SG.applyOp(g, k, h.op); if (ns) await commitGroup(h.g, ns); } }
+    else if (h.t === 'gop') {
+      const g = S.g[h.g]; if (!g || g.owner !== ME.key || !h.op) return; const op = Object.assign({}, h.op); delete op.d;
+      const ns = SG.applyOp(g, k, op); if (!ns) return;
+      if ((op.a === 'cv' || op.a === 'gf') && op.h) { // a picture sent by an assistant: verify it matches its hash before accepting
+        const d = String(h.op.d || ''); if (!okAsset(op.a, d) || (await C.sha32(d)) !== op.h) return; S.ga[op.h] = d;
+      }
+      await commitGroup(h.g, ns);
+    }
+    else if (h.t === 'gar') { const hh = String(h.h || ''); if (SG.HASH.test(hh) && S.ga[hh] && Object.values(S.g).some(g => g.mem[k] && (g.cvh === hh || g.gfh === hh))) sealTo(c, { t: 'gad', h: hh, d: S.ga[hh] }); }
+    else if (h.t === 'gad') {
+      const hh = String(h.h || ''), d = String(h.d || '');
+      if (SG.HASH.test(hh) && !S.ga[hh] && Object.values(S.g).some(g => g.mem[k] && (g.cvh === hh || g.gfh === hh)) && /^data:image\/(jpeg|gif|webp);base64,/.test(d) && okAsset(d.startsWith('data:image/jpeg') ? 'cv' : 'gf', d) && (await C.sha32(d)) === hh) { S.ga[hh] = d; save(); if ($('#pg-grp').classList.contains('on')) fillGroup(); }
+    }
+    else if (h.t === 'gci') onGroupInvite(k, h);
+    else if (h.t === 'gcj') { const g = S.g[h.g]; if (call && call.group === h.g && g && g.mem[k] && !call.parts[k]) callPart(k); }
+    else if (h.t === 'shr') { if (h.on && call && (call.k === k || (call.group && S.g[call.group] && S.g[call.group].mem[k]))) flashNotice(nmOf(call.group || k, k) + ' ' + t('sharingNow'), 3500); }
     else if (h.t === 'pf') receiveProfile(k, h);
     else if (h.t === 'rec') { if (h.on && call && call.k === k) showRecNotice(); else if (!h.on) $('#recn').classList.remove('on'); }
     else if (h.t === 'm') {
@@ -248,7 +263,7 @@
   }
   async function open(id) {
     cur = id; ch(id).u = 0; save(); M[id] = await DB.chatMsgs(id); clearReply();
-    $('#chat').classList.add('on'); $('#tray').classList.remove('on'); $('#bc1').style.display = $('#bc2').style.display = isG(id) ? 'none' : '';
+    $('#chat').classList.add('on'); $('#tray').classList.remove('on'); $('#bc1').style.display = $('#bc2').style.display = '';
     drawHead(); updateComposer(); draw(1); list(); showRot();
   }
   function back() { cur = null; $('#rotb').hidden = true; $('#chat').classList.remove('on'); list(); }
@@ -262,7 +277,7 @@
     const Mm = $('#ms'), nearEnd = Mm.scrollHeight - Mm.scrollTop - Mm.clientHeight < 120; Mm.innerHTML = '';
     const url = b => { const u = URL.createObjectURL(b); urls.push(u); return u; };
     (M[cur] || []).slice(-150).forEach(m => {
-      const b = document.createElement('div'); b.className = 'b' + (m.me ? ' me' : '') + (m.kind === 'st' && !m.del ? ' st' : '') + (m.del ? ' del' : '');
+      const b = document.createElement('div'); b.className = 'b' + (m.me ? ' me' : '') + (m.kind === 'st' && !m.del ? ' st' : '') + (m.del ? ' del' : ''); b.dataset.mid = m.mid;
       if (isG(cur) && !m.me) { const n = document.createElement('b'); n.textContent = nmOf(cur, m.f) + (gTitle(cur, m.f) ? ' · ' + gTitle(cur, m.f) : ''); b.append(n); }
       if (m.r && !m.del) { const q = getM(cur, m.r); const rp = document.createElement('div'); rp.className = 'rp'; rp.textContent = q ? pvText(q) : '…'; b.append(rp); }
       if (m.del) { const s = document.createElement('span'); s.textContent = t('deleted'); b.append(s); }
@@ -308,7 +323,7 @@
   $('#rx').onclick = clearReply;
 
   // ---------- sheets ----------
-  function sheet(n) { $('#x').style.display = n === 'un' ? 'none' : ''; $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
+  function sheet(n) { if (n !== 'inc') pendingGroup = null; $('#x').style.display = n === 'un' ? 'none' : ''; $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
   const closeSheet = () => { if (userPending()) return; sheet(0); };
   window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if ($('#call').classList.contains('on') && !$('#call').classList.contains('min')) { minimizeCall(); return 1; } if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
   $('#x').onclick = closeSheet; $('#sh').onclick = e => { if (e.target.id === 'sh') closeSheet(); };
@@ -316,7 +331,7 @@
   // ---------- pages ----------
   const pgStack = [], PG_ON = {};
   function showPage(n) { const el = $('#pg-' + n); if (!el || pgStack[pgStack.length - 1] === n) return; pgStack.push(n); el.style.zIndex = 10 + pgStack.length; el.classList.add('on'); if (PG_ON[n]) PG_ON[n](); }
-  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'dl') dlClear(); }
+  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'dl' || n === 'gmedia') dlClear(); }
   $$('[data-pg]').forEach(b => b.onclick = () => showPage(b.dataset.pg)); $$('.pback').forEach(b => b.onclick = closePage);
   const svgUri = x => 'data:image/svg+xml,' + encodeURIComponent(x);
   const DEF_AV = svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#d9cdf0"/><circle cx="100" cy="78" r="38" fill="#7a65a8"/><path d="M28 200c0-42 32-72 72-72s72 30 72 72z" fill="#7a65a8"/></svg>');
@@ -392,8 +407,13 @@
   $('#eavb').onclick = $('#eav').onclick = () => $('#pfile').click(); $('#ecovb').onclick = $('#ecov').onclick = () => $('#cfile').click();
   $('#pfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, AVO); if (u) { draft.av = u; renderEdit(); } } catch (x) { alert(t('tooBig')); } };
   $('#cfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, COVO); if (u) { draft.cv = u; renderEdit(); } } catch (x) { alert(t('tooBig')); } };
-  let efKind;
+  let efKind, efCb = null, efMulti = false;
+  function editText(title, val, max, multi, cb) {
+    efKind = '*'; efCb = cb; efMulti = multi; $('#eft').textContent = title; $('#efpw').style.display = multi ? 'none' : 'flex'; $('#efpw .efp').style.display = 'none'; $('#efa').style.display = multi ? '' : 'none'; $('#efe').textContent = '';
+    $('#efi').maxLength = max; $('#efa').maxLength = max; $('#efi').dir = 'auto'; (multi ? $('#efa') : $('#efi')).value = val; sheet('ef');
+  }
   function editField(kind) {
+    efCb = null;
     if (kind === 'user' && ME.user) return toast(t('userLocked'));
     efKind = kind; const bio = kind === 'bio'; $('#eft').textContent = t(kind === 'name' ? 'chName' : kind === 'user' ? 'chUser' : 'chBio');
     $('#efpw').style.display = bio ? 'none' : 'flex'; $('#efpw .efp').style.display = kind === 'user' ? '' : 'none'; $('#efa').style.display = bio ? '' : 'none'; $('#efe').textContent = '';
@@ -401,17 +421,20 @@
   }
   $$('[data-ef]').forEach(b => b.onclick = () => editField(b.dataset.ef));
   $('#efok').onclick = () => {
+    if (efKind === '*') { const v0 = (efMulti ? $('#efa') : $('#efi')).value.trim(), cb = efCb; sheet(0); if (cb) cb(v0); return; }
     const v = (efKind === 'bio' ? $('#efa') : $('#efi')).value.trim();
     if (efKind === 'name') { if (!v) return; draft.name = noCtl(v, 30); }
     else if (efKind === 'user') { const u = v.replace(/^@/, ''); if (u && !USERRE.test(u)) return $('#efe').textContent = t('userBad'); draft.user = u; }
     else draft.bio = noCtl(v, 140);
     renderEdit(); sheet(0);
   };
-  $('#efcb').onclick = () => {
-    const G = $('#fcs'); G.innerHTML = ''; FCS.forEach(c => { const b = document.createElement('button'); b.style.background = c; b.classList.toggle('on', (draft.fc || '#6f5b99') === c); b.onclick = () => { draft.fc = c; renderEdit(); sheet(0); }; G.append(b); });
-    $('#fci').value = draft.fc || '#6f5b99'; sheet('fc');
-  };
-  $('#fci').oninput = e => { draft.fc = e.target.value; renderEdit(); };
+  let colorCb = null;
+  function colorSheet(curC, cb) {
+    colorCb = cb; const G = $('#fcs'); G.innerHTML = ''; FCS.forEach(c => { const b = document.createElement('button'); b.style.background = c; b.classList.toggle('on', (curC || '#6f5b99') === c); b.onclick = () => { sheet(0); cb(c); }; G.append(b); });
+    $('#fci').value = curC || '#6f5b99'; sheet('fc');
+  }
+  $('#fci').onchange = e => { const v = e.target.value, cb = colorCb; sheet(0); if (cb) cb(v); };
+  $('#efcb').onclick = () => colorSheet(draft.fc, c => { draft.fc = c; renderEdit(); });
 
   // ---------- settings ----------
   const BGS = [{ t: 'none' }, { t: 'c', v: '#e8dcc8' }, { t: 'c', v: '#cfe3d4' }, { t: 'c', v: '#d5dff2' }, { t: 'c', v: '#2b2f3a' }, { t: 'c', v: '#1b1230' },
@@ -466,21 +489,22 @@
   };
   let dlUrls = [];
   function dlClear() { dlUrls.forEach(u => URL.revokeObjectURL(u)); dlUrls = []; }
-  PG_ON.dl = async () => {
-    dlClear(); const L = $('#dll'); L.innerHTML = '';
-    const ms = (await DB.allMsgs()).filter(m => m.b && !m.del && ['img', 'vo', 'file'].includes(m.kind)).sort((a, b) => b.ts - a.ts);
-    S.recs.forEach(rc => { const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"><svg class="ic"><use href="#i-video"/></svg></div><div class="mid"><b></b><span></span></div><button class="x2">✕</button>';
+  async function renderDl(L, chatId) {
+    dlClear(); L.innerHTML = '';
+    const ms = (await DB.allMsgs()).filter(m => m.b && !m.del && ['img', 'vo', 'file'].includes(m.kind) && (!chatId || m.chat === chatId)).sort((a, b) => b.ts - a.ts);
+    (chatId ? [] : S.recs).forEach(rc => { const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"><svg class="ic"><use href="#i-video"/></svg></div><div class="mid"><b></b><span></span></div><button class="x2">✕</button>';
       r.querySelector('b').textContent = t('recDl') + ' · ' + nmOf(rc.k, rc.k); r.querySelector('.mid span').textContent = Math.ceil((rc.size || 0) / 1024) + ' KB · ' + new Date(rc.ts).toLocaleString(I18N.lang);
       r.onclick = async () => { const b = await DB.get('rec:' + rc.id); if (b) saveBlob({ b, name: rc.name, mime: rc.mime, kind: 'file' }); };
       r.querySelector('.x2').onclick = async e => { e.stopPropagation(); if (!confirm(t('delSt'))) return; await DB.del('rec:' + rc.id); S.recs = S.recs.filter(x => x.id !== rc.id); save(); PG_ON.dl(); }; L.append(r); });
-    if (!ms.length && !S.recs.length) { L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg>' + t('noDownloads') + '</div>'; return; }
+    if (!ms.length && (chatId || !S.recs.length)) { L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg>' + t('noDownloads') + '</div>'; return; }
     ms.forEach(m => {
       const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"></div><div class="mid"><b></b><span></span></div><svg class="ic"><use href="#i-download"/></svg>';
       const th = r.firstChild; if (m.kind === 'img') { const u = URL.createObjectURL(m.b); dlUrls.push(u); th.style.backgroundImage = 'url(' + u + ')'; } else th.innerHTML = '<svg class="ic"><use href="#i-' + (m.kind === 'vo' ? 'mic' : 'file') + '"/></svg>';
       r.querySelector('b').textContent = m.name || (m.kind === 'vo' ? t('voice') : t('photo'));
       r.querySelector('.mid span').textContent = Math.ceil(m.b.size / 1024) + ' KB · ' + ((ch(m.chat) || {}).name || '') + ' · ' + new Date(m.ts).toLocaleDateString(I18N.lang); r.onclick = () => saveBlob(m); L.append(r);
     });
-  };
+  }
+  PG_ON.dl = () => renderDl($('#dll')); PG_ON.gmedia = () => renderDl($('#gml2'), cur);
   function renderStPage() {
     const G = $('#stg'); G.innerHTML = ''; const plus = document.createElement('button'); plus.className = 'c plus'; plus.innerHTML = '<svg class="ic" style="width:34px;height:34px"><use href="#i-sticker"/></svg>';
     plus.onclick = () => { sk = {}; skDraw(); $('#cap').value = ''; $('#zm').value = 1; sheet('s'); }; G.append(plus);
@@ -619,7 +643,8 @@
     Object.assign(g, st, { raw, sig }); if (!st.mem[ME.key]) g.left = 1;
     S.g[id] = g; Object.keys(st.mem).forEach(connect); save(); list();
     if (cur === id) { drawHead(); updateComposer(); draw(); }
-    if ($('#p-gi').classList.contains('on')) openGroupInfo(true);
+    if ($('#pg-grp').classList.contains('on')) fillGroup();
+    wantAssets(); pruneGa();
   }
   async function receiveState(c, h) {
     if (typeof h.raw !== 'string' || h.raw.length > 70000 || typeof h.sig !== 'string') return;
@@ -657,47 +682,92 @@
     await commitGroup(id, { id, ver: 1, owner: ME.key, opk: C.b64(ID.pub), name: n, mem, roles: {}, titles: {}, pd: { send: 1, media: 1, info: 0, add: 0 }, pm: {} });
     sheet(0); open(id);
   };
-  function openGroupInfo(refreshOnly) {
-    const id = cur, g = S.g[id]; if (!g) return; const me = ME.key, owner = g.owner === me, info = !g.left && SG.can(g, me, 'info'), add = !g.left && SG.can(g, me, 'add');
-    avStyle($('#gav'), g.av, '👥'); $('#gname').value = g.name; $('#gname').disabled = !info; $('#gsave').style.display = info ? '' : 'none'; $('#gadd').style.display = add ? '' : 'none';
-    const L = $('#gmem'); L.innerHTML = '';
-    Object.keys(g.mem).sort((a, b) => ROLE_ORD[SG.role(g, a)] - ROLE_ORD[SG.role(g, b)]).forEach(k => {
-      const r = document.createElement('div'); r.className = 'mrow'; r.innerHTML = '<div class="av"></div><div class="mid"><b></b><span></span></div><span class="rb"></span>';
-      const o = S.c[k]; avStyle(r.children[0], o && o.av, (nmOf(id, k) || '?')[0]);
-      r.querySelector('b').textContent = nmOf(id, k) + (k === me ? ' (' + t('me') + ')' : ''); r.querySelector('.mid span').textContent = (g.titles && g.titles[k]) || (o && o.un ? '@' + o.un : '');
-      const rl = SG.role(g, k), rb = r.querySelector('.rb'); if (rl === 'o') rb.textContent = '👑 ' + t('manager'); else if (rl === 'a') rb.textContent = '⭐ ' + t('assistant'); else rb.remove();
-      if (owner && k !== me && !g.left) r.onclick = () => memberMenu(k); L.append(r);
-    });
-    $('#gpdbox').style.display = owner ? '' : 'none'; const P = $('#gpd'); P.innerHTML = '';
-    SG.PERMS.forEach(p => { const on_ = !!(g.pd || SG.MEMBER_DEFAULT)[p], b = document.createElement('button'); b.className = 'tg'; b.textContent = (on_ ? '✅ ' : '⬜ ') + t(PERM_LBL[p]); b.onclick = () => groupAct(id, { a: 'pd', p, v: !on_ }); P.append(b); });
-    $('#gleave').textContent = g.left ? t('delChat') : t('leaveGroup');
-    if (!refreshOnly) sheet('gi');
+  // ---------- group page: cover + framed photo, tool row, members | description + animated picture ----------
+  const DEF_GCOVER = svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0a0716"/><stop offset="1" stop-color="#2a1856"/></linearGradient></defs><rect width="800" height="400" fill="url(#g)"/><g fill="#e9c46a" opacity=".8"><circle cx="70" cy="60" r="2.5"/><circle cx="210" cy="320" r="2"/><circle cx="640" cy="70" r="3"/><circle cx="730" cy="260" r="2"/><circle cx="450" cy="40" r="2"/></g><circle cx="700" cy="330" r="90" fill="#8b5cf6" opacity=".2"/></svg>');
+  const GMAX = { cv: 60000, gf: 450000 };
+  const okAsset = (kind, d) => typeof d === 'string' && d.length <= GMAX[kind] && (kind === 'cv' ? /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/ : /^data:image\/(gif|webp);base64,[A-Za-z0-9+/=]+$/).test(d);
+  function wantAssets() { // ask online members for group pictures we do not have yet (they are verified against their hash)
+    Object.values(S.g).forEach(g => [g.cvh, g.gfh].forEach(h => { if (h && !S.ga[h]) Object.keys(g.mem).forEach(k => { if (k !== ME.key && on(k)) sealTo(conns[k], { t: 'gar', h }); }); }));
   }
-  $('#gav').onclick = () => { const g = S.g[cur]; if (g && !g.left && SG.can(g, ME.key, 'info')) $('#gfile').click(); };
+  function pruneGa() { const keep = new Set(); Object.values(S.g).forEach(g => { if (g.cvh) keep.add(g.cvh); if (g.gfh) keep.add(g.gfh); (g.pend || []).forEach(op => op.h && keep.add(op.h)); }); Object.keys(S.ga).forEach(h => { if (!keep.has(h)) delete S.ga[h]; }); }
+  function fillGroup() {
+    const g = cur && S.g[cur]; if (!g) return; const me = ME.key, add = !g.left && SG.can(g, me, 'add');
+    $('#gcov').style.backgroundImage = 'url("' + (g.cvh && S.ga[g.cvh] ? S.ga[g.cvh] : DEF_GCOVER) + '")'; bigAv($('#gpav'), g.av, g.fc);
+    $('#gpn').textContent = g.name; $('#gdt').textContent = g.ds || '......';
+    const gf = $('#ggif'); if (g.gfh && S.ga[g.gfh]) { gf.style.backgroundImage = 'url("' + S.ga[g.gfh] + '")'; gf.textContent = ''; } else { gf.style.backgroundImage = ''; gf.textContent = t('gGifNone'); }
+    $('#tbinv').hidden = !add;
+    const L = $('#gml'); L.innerHTML = '';
+    Object.keys(g.mem).sort((a, b) => ROLE_ORD[SG.role(g, a)] - ROLE_ORD[SG.role(g, b)]).forEach(k => {
+      const r = document.createElement('div'); r.className = 'gmr'; r.innerHTML = '<div class="av"></div><div class="mid"><b></b><span></span></div><div class="own"></div>';
+      const o = S.c[k]; avStyle(r.children[0], o && o.av, (nmOf(cur, k) || '?')[0]);
+      r.querySelector('b').textContent = nmOf(cur, k) + (k === me ? ' (' + t('me') + ')' : ''); r.querySelector('.mid span').textContent = (g.titles && g.titles[k]) || (o && o.un ? '@' + o.un : '');
+      const rl = SG.role(g, k), ow = r.querySelector('.own');
+      if (rl === 'm') ow.remove(); else { ow.innerHTML = '<span></span><svg class="ic"><use href="#i-star8"/></svg>'; ow.firstChild.textContent = rl === 'o' ? t('ownerBadge') : t('assistant'); }
+      r.onclick = () => { if (g.owner === me && k !== me && !g.left) memberMenu(k); else if (S.c[k]) openProfileView(k); };
+      L.append(r);
+    });
+  }
+  function openGroupInfo(refreshOnly) { fillGroup(); if (!refreshOnly) showPage('grp'); }
+  async function groupSetAsset(kind, d) { const h = await C.sha32(d); S.ga[h] = d; save(); if (S.g[cur]) await groupAct(cur, { a: kind, h, d }); }
   $('#gfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, AVO); if (u) await groupAct(cur, { a: 'av', v: u }); } catch (x) { alert(t('tooBig')); } };
-  $('#gsave').onclick = () => { const v = $('#gname').value.trim(); if (v && v !== S.g[cur].name) groupAct(cur, { a: 'name', v }); };
+  $('#gcvfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, COVO); if (u) await groupSetAsset('cv', u); } catch (x) { alert(t('tooBig')); } };
+  $('#gifile').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    const d = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); }); if (!okAsset('gf', d)) return alert(t('gifBig')); await groupSetAsset('gf', d);
+  };
+  function groupSettings() {
+    const id = cur, g = S.g[id]; if (!g) return; const info = !g.left && SG.can(g, ME.key, 'info'), L = $('#actl'); L.innerHTML = '';
+    const add = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = () => { sheet(0); setTimeout(fn, 30); }; L.append(b); };
+    if (info) {
+      add('📷 ' + t('gsPhoto'), () => $('#gfile').click()); add('🎞 ' + t('gsGif'), () => $('#gifile').click());
+      add('📝 ' + t('gsDesc'), () => editText(t('gsDesc'), g.ds || '', 300, true, v => groupAct(id, { a: 'ds', v })));
+      add('🎨 ' + t('gsFrame'), () => colorSheet(g.fc, c => groupAct(id, { a: 'fc', v: c }))); add('🖼 ' + t('gsCover'), () => $('#gcvfile').click());
+      add('✏️ ' + t('gsName'), () => editText(t('gsName'), g.name, 40, false, v => v && groupAct(id, { a: 'name', v })));
+      if (g.gfh) add('🗑 ' + t('gsRmGif'), () => groupAct(id, { a: 'gf', h: '' })); if (g.cvh) add('🗑 ' + t('gsRmCover'), () => groupAct(id, { a: 'cv', h: '' }));
+    }
+    add('🚪 ' + (g.left ? t('delChat') : t('leaveGroup')), async () => {
+      if (!confirm(t(g.left ? 'delChat' : 'confirmLeave'))) return;
+      if (!g.left && g.owner && g.owner !== ME.key && on(g.owner)) await sealTo(conns[g.owner], { t: 'gop', g: id, op: { a: 'leave' } });
+      await DB.delChat(id); delete S.g[id]; delete M[id]; save(); while (pgStack.length) closePage(); back();
+    });
+    add(t('cancelAct'), () => {}); sheet('act');
+  }
+  function openAdmins() {
+    const g = S.g[cur]; if (!g) return; const owner = g.owner === ME.key, L = $('#gadl'); L.innerHTML = '';
+    Object.keys(g.mem).filter(k => SG.role(g, k) !== 'm').sort((a, b) => ROLE_ORD[SG.role(g, a)] - ROLE_ORD[SG.role(g, b)]).forEach(k => {
+      const r = document.createElement('div'); r.className = 'gmr'; r.innerHTML = '<div class="av"></div><div class="mid"><b></b><span></span></div><div class="own"><span></span><svg class="ic"><use href="#i-star8"/></svg></div>';
+      const o = S.c[k]; avStyle(r.children[0], o && o.av, (nmOf(cur, k) || '?')[0]); r.querySelector('b').textContent = nmOf(cur, k); r.querySelector('.mid span').textContent = (g.titles && g.titles[k]) || '';
+      r.querySelector('.own span').textContent = SG.role(g, k) === 'o' ? t('ownerBadge') : t('assistant'); L.append(r);
+    });
+    const P = $('#gadp'); P.innerHTML = '';
+    SG.PERMS.forEach(p => { const on_ = !!(g.pd || SG.MEMBER_DEFAULT)[p], b = document.createElement('button'); b.className = 'tg'; b.textContent = (on_ ? '✅ ' : '⬜ ') + t(PERM_LBL[p]); if (owner) b.onclick = async () => { await groupAct(cur, { a: 'pd', p, v: !on_ }); openAdmins(); }; else b.style.opacity = '.6'; P.append(b); });
+    $('#gadn').textContent = owner ? '' : t('admNote'); sheet('gadm');
+  }
   function memberMenu(k) {
-    const id = cur, g = S.g[id]; if (!g || !g.mem[k]) return sheet('gi'); const L = $('#actl'); L.innerHTML = '';
+    const id = cur, g = S.g[id]; if (!g || !g.mem[k]) return sheet(0); const L = $('#actl'); L.innerHTML = '';
     const add = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; L.append(b); };
     const again = async op => { await groupAct(id, op); memberMenu(k); };
-    add('← ' + nmOf(id, k), () => openGroupInfo());
-    add('🏷 ' + t('setTitle') + ': ' + (g.titles[k] || '—'), () => { const v = dialog(t('titleAsk'), g.titles[k] || ''); if (v !== null) again({ a: 'title', k, v }); });
+    add('← ' + nmOf(id, k), () => sheet(0)); if (S.c[k]) add('👤 ' + t('viewProfile'), () => { sheet(0); openProfileView(k); });
+    add('🏷 ' + t('setTitle') + ': ' + ((g.titles && g.titles[k]) || '—'), () => { const v = dialog(t('titleAsk'), (g.titles && g.titles[k]) || ''); if (v !== null) again({ a: 'title', k, v }); });
     add(g.roles[k] === 'a' ? '⭐ ' + t('demote') : '⭐ ' + t('promote'), () => again({ a: 'role', k, v: g.roles[k] === 'a' ? '' : 'a' }));
     SG.PERMS.forEach(p => { const eff = SG.can(g, k, p); add((eff ? '✅ ' : '⬜ ') + t(PERM_LBL[p]), () => again({ a: 'perm', k, p, v: !eff })); });
-    add('🚫 ' + t('removeMember'), async () => { if (confirm(t('confirmRemove'))) { await groupAct(id, { a: 'rm', k }); openGroupInfo(); } });
+    add('🚫 ' + t('removeMember'), async () => { if (confirm(t('confirmRemove'))) { await groupAct(id, { a: 'rm', k }); sheet(0); } });
     sheet('act');
   }
-  $('#gadd').onclick = () => {
+  $('#tbinv').onclick = () => {
     const g = S.g[cur], L = $('#gal'); L.innerHTML = ''; const cand = Object.entries(S.c).filter(([k]) => !g.mem[k]); if (!cand.length) L.innerHTML = '<p>' + t('noMembersToAdd') + '</p>';
     cand.forEach(([k, o]) => { const d = document.createElement('label'); d.className = 'chk'; d.innerHTML = '<input type="checkbox" value="' + k + '"><span></span>'; d.lastChild.textContent = o.name; L.append(d); }); sheet('ga');
   };
-  $('#gac').onclick = async () => { const ks = [...$$('#gal input:checked')].map(i => i.value); for (const k of ks) await groupAct(cur, { a: 'add', k, n: S.c[k].name }); openGroupInfo(); };
-  $('#gleave').onclick = async () => {
-    const id = cur, g = S.g[id]; if (!confirm(t(g.left ? 'delChat' : 'confirmLeave'))) return;
-    if (!g.left && g.owner && g.owner !== ME.key && on(g.owner)) await sealTo(conns[g.owner], { t: 'gop', g: id, op: { a: 'leave' } });
-    await DB.delChat(id); delete S.g[id]; delete M[id]; save(); sheet(0); back();
+  $('#gac').onclick = async () => { const ks = [...$$('#gal input:checked')].map(i => i.value); for (const k of ks) await groupAct(cur, { a: 'add', k, n: S.c[k].name }); sheet(0); fillGroup(); };
+  $('#tbst').onclick = () => showPage('st'); $('#tbme').onclick = () => showPage('gmedia'); $('#tbad').onclick = openAdmins; $('#tbset').onclick = groupSettings;
+  $('#tbse').onclick = () => { $('#gsq').value = ''; $('#gsr').innerHTML = ''; $('#gsq').placeholder = t('gSearchPh'); showPage('gsearch'); setTimeout(() => $('#gsq').focus(), 320); };
+  function jumpTo(mid) { setTimeout(() => { const b = document.querySelector('#ms .b[data-mid="' + mid + '"]'); if (b) { b.scrollIntoView({ block: 'center' }); b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 1700); } }, 380); }
+  $('#gsq').oninput = async e => {
+    const q = e.target.value.trim().toLowerCase(), L = $('#gsr'); L.innerHTML = ''; if (!q) return;
+    const ms = (await DB.chatMsgs(cur)).filter(m => m.kind === 't' && !m.del && (m.x || '').toLowerCase().includes(q)).reverse().slice(0, 100);
+    if (!ms.length) { L.innerHTML = '<div class="empty">' + t('gSearchNone') + '</div>'; return; }
+    ms.forEach(m => { const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="mid"><b></b><span></span></div>'; r.querySelector('b').textContent = nmOf(cur, m.f) + ' · ' + new Date(m.ts).toLocaleString(I18N.lang); const sp = r.querySelector('.mid span'); sp.textContent = m.x; sp.style.whiteSpace = 'normal'; r.onclick = () => { while (pgStack.length) closePage(); jumpTo(m.mid); }; L.append(r); });
   };
-
   // chat header menu
   $('#bk').onclick = back;
   $('#chh').onclick = () => isG(cur) ? openGroupInfo() : openContactInfo();
@@ -793,22 +863,31 @@
   function miniVid() { const rs = $('#rv').srcObject, has = !!(rs && rs.getVideoTracks && rs.getVideoTracks().length); $('#cmv').srcObject = has ? rs : null; $('#cmv').classList.toggle('on', has && $('#call').classList.contains('min')); }
   function minimizeCall() { if (!call) return; $('#call').classList.add('min'); $('#cmini').classList.add('on'); $('#app').classList.add('incall'); miniVid(); }
   function restoreCall() { $('#call').classList.remove('min'); $('#cmini').classList.remove('on'); $('#app').classList.remove('incall'); $('#cmv').classList.remove('on'); }
-  function showCall(k, status) { $('#cnm').textContent = nmOf(k, k); $('#cmn').textContent = nmOf(k, k); $('#cst').textContent = status || ''; $('#cmt').textContent = status || ''; restoreCall(); $('#call').classList.add('on'); }
+  const callName = k => S.g[k] ? S.g[k].name : nmOf(k, k);
+  function showCall(k, status) { $('#cnm').textContent = callName(k); $('#cmn').textContent = callName(k); $('#cst').textContent = status || ''; $('#cmt').textContent = status || ''; restoreCall(); $('#call').classList.toggle('grp', !!(call && call.group)); $('#ccam').hidden = $('#cshr').hidden = !(call && call.video); $('#crec').hidden = !!(call && call.group); $('#call').classList.add('on'); }
   function setupCall(cl, k, stream, video) {
     call = { cl, stream, k, video: !!video }; showCall(k, t('calling'));
     $('#lv').srcObject = stream; $('#lv').classList.toggle('v1', !!video);
     cl.on('stream', rs => { $('#rv').srcObject = rs; $('#rv').classList.toggle('v1', rs.getVideoTracks().length > 0); if (call && !call.t0) call.t0 = Date.now(); clearInterval(callTick); callTick = setInterval(callUi, 1000); callUi(); miniVid(); });
     cl.on('close', endCall); cl.on('error', () => { $('#cst').textContent = t('callFail'); setTimeout(endCall, 1200); });
   }
-  function endCall() { if (!call) return; stopRec(); const c = call; call = null; clearInterval(callTick); restoreCall(); $('#cmu').textContent = '🎙'; $('#cmmu').classList.remove('off'); $('#cmv').srcObject = null; $('#recn').classList.remove('on'); try { c.cl.close(); } catch (e) {} c.stream.getTracks().forEach(x => x.stop()); $('#call').classList.remove('on'); $('#rv').srcObject = $('#lv').srcObject = null; $('#rv').classList.remove('v1'); $('#lv').classList.remove('v1'); }
+  function endCall() {
+    if (!call) return; stopRec(); stopShare(); const c = call; call = null; clearInterval(callTick); restoreCall(); $('#cmu').textContent = '🎙'; $('#cmmu').classList.remove('off'); $('#ccam').classList.remove('off'); $('#cmv').srcObject = null; $('#recn').classList.remove('on');
+    try { c.cl && c.cl.close(); } catch (e) {} Object.values(c.parts || {}).forEach(p => { try { p.cl.close(); } catch (e) {} }); c.stream.getTracks().forEach(x => x.stop());
+    $('#gtiles').innerHTML = ''; $('#call').classList.remove('on', 'grp'); $('#rv').srcObject = $('#lv').srcObject = null; $('#rv').classList.remove('v1'); $('#lv').classList.remove('v1');
+  }
   async function startCall(video) {
     if (!cur || isG(cur) || call) return; if (!on(cur)) return alert(t('callNeedOnline'));
     try { const s = await media(video); setupCall(peer.call('shilagram-' + cur, s, { metadata: { video } }), cur, s, video); } catch (e) { alert(t('noMic')); }
   }
-  $('#bc1').onclick = () => startCall(false); $('#bc2').onclick = () => startCall(true); $('#cen').onclick = endCall;
+  $('#bc1').onclick = () => isG(cur) ? startGroupCall(false) : startCall(false); $('#bc2').onclick = () => isG(cur) ? startGroupCall(true) : startCall(true); $('#cen').onclick = endCall;
   function toggleMute() { if (!call) return; const tr = call.stream.getAudioTracks()[0]; if (tr) { tr.enabled = !tr.enabled; $('#cmu').textContent = tr.enabled ? '🎙' : '🔇'; $('#cmmu').classList.toggle('off', !tr.enabled); } }
   $('#cmu').onclick = $('#cmmu').onclick = toggleMute; $('#cmin').onclick = minimizeCall; $('#cmm').onclick = $('#cmv').onclick = restoreCall; $('#cme').onclick = endCall;
   function onIncomingCall(cl) {
+    if (cl.metadata && cl.metadata.g) { // a member of a group call we are in
+      const g = S.g[cl.metadata.g], k = peerKey(cl.peer);
+      if (call && call.group === cl.metadata.g && g && g.mem[k] && !call.parts[k]) { cl.answer(call.stream); wirePart(k, cl); } else try { cl.close(); } catch (e) {} return;
+    }
     const k = peerKey(cl.peer);
     if (!S.c[k] || !on(k) || call || pendingCall) { try { cl.close(); } catch (e) {} return; } // only authenticated friends may ring us
     pendingCall = cl; const video = !!(cl.metadata && cl.metadata.video);
@@ -843,9 +922,72 @@
     dirBusy = true; claimUsername(ME.user).then(r => { dirBusy = false; if (r === false) { if (++dirFails === 15) warn(t('userLost')); } else if (r === true) { if (dirFails >= 15) warn(0); dirFails = 0; } });
   }
 
+  // ---------- group calls: a mesh of media calls; whoever joins is called by everybody already in ----------
+  let pendingGroup = null, recnT2;
+  function flashNotice(text, ms) { const n = $('#recn'); n.textContent = text; n.classList.add('on'); clearTimeout(recnT); recnT = setTimeout(() => n.classList.remove('on'), ms); }
+  function addTile(k, stream, local) {
+    const id = 'tile-' + (local ? 'me' : k); let el = document.getElementById(id);
+    if (!el) { el = document.createElement('div'); el.className = 'tile'; el.id = id; el.innerHTML = '<div class="ph"></div><video autoplay playsinline></video><span></span>'; $('#gtiles').append(el); }
+    const v = el.querySelector('video'), nm = local ? ME.name : nmOf(call.group, k); v.muted = !!local; v.srcObject = stream; el.querySelector('span').textContent = local ? t('me') : nm;
+    el.querySelector('.ph').textContent = (nm || '?')[0]; el.classList.toggle('nov', !stream.getVideoTracks().length);
+  }
+  function wirePart(k, cl) {
+    call.parts[k] = { cl };
+    cl.on('stream', rs => { if (!call) return; addTile(k, rs); if (!call.t0) call.t0 = Date.now(); clearInterval(callTick); callTick = setInterval(callUi, 1000); callUi(); if (call.sharing) replaceVideoTrack(call.sharing.track); });
+    const gone = () => { const e = document.getElementById('tile-' + k); if (e) e.remove(); if (call && call.parts[k] && call.parts[k].cl === cl) delete call.parts[k]; };
+    cl.on('close', gone); cl.on('error', gone);
+  }
+  function callPart(k) {
+    if (!call || !peer || call.parts[k]) return; if (Object.keys(call.parts).length >= 5) return toast(t('gcFull'));
+    try { wirePart(k, peer.call('shilagram-' + k, call.stream, { metadata: { g: call.group, video: call.video } })); } catch (e) {}
+  }
+  async function startGroupCall(video) {
+    const g = S.g[cur]; if (!g || g.left || call) return; let s; try { s = await media(video); } catch (e) { return alert(t('noMic')); }
+    call = { group: cur, k: cur, video: !!video, stream: s, parts: {} }; showCall(cur, t('gcWait')); addTile(ME.key, s, true);
+    members(cur).forEach(k => on(k) && sealTo(conns[k], { t: 'gci', g: cur, v: video ? 1 : 0 }));
+  }
+  function onGroupInvite(k, h) {
+    const g = S.g[h.g]; if (!g || !g.mem[k] || g.left || call || pendingCall || pendingGroup) return;
+    const inv = pendingGroup = { g: h.g, video: !!h.v }; $('#inct').textContent = t('gInviteCall') + ' ' + g.name + ' — ' + nmOf(h.g, k) + (h.v ? ' 🎥' : ' 🎤'); sheet('inc'); pendingGroup = inv;
+    notify(t('gInviteCall') + ' ' + g.name, nmOf(h.g, k), '-');
+    $('#inca').onclick = () => joinGroupCall(inv); $('#incd').onclick = () => sheet(0);
+  }
+  async function joinGroupCall(inv) {
+    sheet(0); if (call || !S.g[inv.g]) return; let s; try { s = await media(inv.video); } catch (e) { return alert(t('noMic')); }
+    call = { group: inv.g, k: inv.g, video: inv.video, stream: s, parts: {} }; showCall(inv.g, t('gcWait')); addTile(ME.key, s, true);
+    members(inv.g).forEach(k => on(k) && sealTo(conns[k], { t: 'gcj', g: inv.g }));
+  }
+  // ---------- camera toggle + screen sharing (video calls) ----------
+  function toggleCam() {
+    if (!call) return; const trs = call.stream.getVideoTracks(); if (!trs.length) return; const on_ = !trs[0].enabled; trs.forEach(x => x.enabled = on_); $('#ccam').classList.toggle('off', !on_);
+    const el = document.getElementById('tile-me'); if (el) el.classList.toggle('nov', !on_);
+  }
+  const shareTargets = () => call.group ? Object.values(call.parts).map(p => p.cl) : [call.cl];
+  function replaceVideoTrack(tr) { shareTargets().forEach(cl => { const pc = cl && cl.peerConnection; if (!pc) return; const sd = pc.getSenders().find(x => x.track && x.track.kind === 'video'); if (sd) sd.replaceTrack(tr).catch(() => {}); }); }
+  function notifyShare(on_) { (call.group ? members(call.group) : [call.k]).forEach(k => on(k) && sealTo(conns[k], { t: 'shr', on: on_ ? 1 : 0 })); }
+  function nativeShare() { // WebView cannot capture the screen: the app forwards JPEG frames of the screen, drawn on a canvas that becomes the video track
+    const cv = document.createElement('canvas'), cx = cv.getContext('2d'), img = new Image(); let busy = false; cv.width = 360; cv.height = 640; cx.fillStyle = '#000'; cx.fillRect(0, 0, 360, 640);
+    window.__screenFrame = b64 => { if (busy) return; busy = true; img.onload = () => { if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; } cx.drawImage(img, 0, 0); busy = false; }; img.onerror = () => { busy = false; }; img.src = 'data:image/jpeg;base64,' + b64; };
+    const tr = cv.captureStream(8).getVideoTracks()[0]; NATIVE.startScreenShare(); return { track: tr, stop: () => { try { NATIVE.stopScreenShare(); } catch (e) {} window.__screenFrame = null; } };
+  }
+  async function startShare() {
+    if (!call || !call.video || call.sharing) return; let track, stop;
+    if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) { try { const ds = await navigator.mediaDevices.getDisplayMedia({ video: true }); track = ds.getVideoTracks()[0]; stop = () => ds.getTracks().forEach(x => x.stop()); track.onended = () => stopShare(); } catch (e) {} }
+    if (!track && NATIVE && NATIVE.startScreenShare) { const n = nativeShare(); track = n.track; stop = n.stop; window.__screenStopped = () => stopShare(); }
+    if (!track) return toast(t('shareNA'));
+    call.sharing = { track, stop }; replaceVideoTrack(track); $('#cshr').classList.add('on'); notifyShare(true);
+    const pv = new MediaStream([track]); if (call.group) addTile(ME.key, pv, true); else $('#lv').srcObject = pv;
+  }
+  function stopShare() {
+    if (!call || !call.sharing) return; const sh = call.sharing; call.sharing = null; const cam = call.stream.getVideoTracks()[0]; if (cam) replaceVideoTrack(cam);
+    try { sh.stop(); } catch (e) {} $('#cshr').classList.remove('on'); notifyShare(false);
+    if (call.group) addTile(ME.key, call.stream, true); else $('#lv').srcObject = call.stream;
+  }
+  $('#ccam').onclick = toggleCam; $('#cshr').onclick = () => call && call.sharing ? stopShare() : startShare();
+
   // ---------- call recording (what you see + both voices), with a notice sent to the other side ----------
   let crec = null, recnT;
-  function showRecNotice() { const n = $('#recn'); n.textContent = t('recNotice'); n.classList.add('on'); clearTimeout(recnT); recnT = setTimeout(() => n.classList.remove('on'), 5000); }
+  function showRecNotice() { flashNotice(t('recNotice'), 5000); }
   async function toggleRec() {
     if (crec) return stopRec(); if (!call) return;
     if (!on(call.k) || !(await sealTo(conns[call.k], { t: 'rec', on: 1 }))) return alert(t('callFail')); // never record unless the other side was told
@@ -957,7 +1099,7 @@
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
-  if (window.__DEBUG) window.__app = { S, conns, rot, seen, on, checkRotation, dirLookup, get dirPeer() { return dirPeer; } };
+  if (window.__DEBUG) window.__app = { S, conns, rot, seen, on, checkRotation, dirLookup, get dirPeer() { return dirPeer; }, get call() { return call; } };
   await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); if (!ME.user) setTimeout(askUser, 500);
   if (NATIVE && NATIVE.ready) try { NATIVE.ready(); } catch (e) {}
 })();
