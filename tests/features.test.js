@@ -44,3 +44,22 @@ test('forward label and password policy', () => {
   assert.equal(F.fwName('A\nB' + 'x'.repeat(100)).length, 40); assert.ok(!/\n/.test(F.fwName('A\nB')));
   assert.ok(F.tsvStrongEnough('abcdef') && !F.tsvStrongEnough('abc') && !F.tsvStrongEnough('x'.repeat(65)) && !F.tsvStrongEnough(1234567));
 });
+
+test('status: emoji / image validation', () => {
+  ['😀', '👨‍👩‍👧', '🇸🇦', '1️⃣', '❤️', '👍🏽'].forEach(e => assert.ok(F.okEmoji(e), e));
+  ['', 'abc', '<b>', '😀a', 'x'.repeat(30), 5, null].forEach(e => assert.ok(!F.okEmoji(e), String(e)));
+  assert.ok(F.okStatusImg('data:image/webp;base64,AAAA')); assert.ok(!F.okStatusImg('data:image/svg+xml;base64,AAAA'));
+  assert.ok(!F.okStatusImg('data:image/png;base64,AA"onload=x')); assert.ok(!F.okStatusImg('data:image/png;base64,' + 'A'.repeat(F.STATUS_IMG_MAX)));
+});
+test('status: timer, header and receiver validation', () => {
+  const now = 1e12; const st = F.makeStatus('e', '🔥', 12, now); assert.deepEqual(st, { k: 'e', v: '🔥', x: now + 12 * 3600000 });
+  assert.equal(F.makeStatus('e', 'abc', 1, now), null); assert.equal(F.makeStatus('e', '🔥', 0, now).x, 0); assert.equal(F.makeStatus('e', '🔥', 9999, now).x, 0);
+  assert.equal(F.makeStatus('e', '🔥', 1.5, now).x, now + 5400000);
+  assert.deepEqual(F.statusHdr(st, now + 3600000), { k: 'e', v: '🔥', r: 11 * 3600000 }); assert.equal(F.statusHdr(st, st.x), '');
+  assert.deepEqual(F.statusHdr({ k: 'e', v: '🔥', x: 0 }, now), { k: 'e', v: '🔥', r: 0 });
+  const got = F.cleanStatus(F.statusHdr(st, now), now + 5); assert.equal(got.x, now + 5 + 12 * 3600000);
+  [null, 'x', { k: 'e', v: '🔥', r: -1 }, { k: 'e', v: '🔥', r: 'a' }, { k: 'e', v: '🔥', r: 99 * 86400000 }, { k: 'z', v: '🔥', r: 0 }, { k: 'e', v: 'hi', r: 0 }].forEach(h => assert.equal(F.cleanStatus(h, now), null));
+  assert.ok(F.statusActive({ x: 0 }, now) && !F.statusActive(null, now) && !F.statusActive({ x: now - 1 }, now));
+  assert.deepEqual(F.statusLeft({ x: now + 30 * 60000 }, now), { n: 30, u: 'm' }); assert.deepEqual(F.statusLeft({ x: now + 5 * 3600000 }, now), { n: 5, u: 'h' });
+  assert.deepEqual(F.statusLeft({ x: now + 4 * 86400000 }, now), { n: 4, u: 'd' }); assert.equal(F.statusLeft({ x: 0 }, now), null);
+});

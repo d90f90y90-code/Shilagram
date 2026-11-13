@@ -54,6 +54,30 @@
   // ---- two-step verification password policy ----
   const tsvStrongEnough = p => typeof p === 'string' && p.length >= 6 && p.length <= 64;
 
+
+  // ---- emoji / sticker / photo status next to the name ----
+  // stored as { k: 'e'|'i', v: emoji | small data-URL, x: expiry timestamp (0 = never) }; sent as { k, v, r: ms left (0 = never) }
+  const STATUS_HOURS = [1, 4, 12, 24, 72, 168, 0];         // presets offered in the UI (0 = no timer)
+  const STATUS_MAX_MS = 30 * DAY, STATUS_IMG_MAX = 9000;
+  const EMOJI_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator}|\u200d|\ufe0f|\u20e3|[#*0-9](?=\ufe0f?\u20e3))+$/u;
+  const okEmoji = v => typeof v === 'string' && v.length > 0 && v.length <= 24 && EMOJI_RE.test(v);
+  const okStatusImg = v => typeof v === 'string' && v.length <= STATUS_IMG_MAX && /^data:image\/(?:png|webp|jpeg);base64,[A-Za-z0-9+\/=]+$/.test(v);
+  const hoursToMs = h => { h = Number(h); return Number.isFinite(h) && h > 0 && h * 3600000 <= STATUS_MAX_MS ? Math.round(h * 3600000) : 0; };
+  function makeStatus(k, v, hours, now) { // what the owner stores; null if the content is not acceptable
+    if (!(k === 'e' ? okEmoji(v) : k === 'i' && okStatusImg(v))) return null;
+    const ms = hoursToMs(hours); return { k, v, x: ms ? now + ms : 0 };
+  }
+  const statusActive = (st, now) => !!st && (st.x === 0 || st.x > now);
+  const statusHdr = (st, now) => statusActive(st, now) ? { k: st.k, v: st.v, r: st.x ? st.x - now : 0 } : '';
+  function cleanStatus(h, now) { // what a receiver keeps; anything odd is dropped
+    if (!h || typeof h !== 'object') return null; const r = Number(h.r);
+    if (!Number.isFinite(r) || r < 0 || r > STATUS_MAX_MS) return null;
+    if (!(h.k === 'e' ? okEmoji(h.v) : h.k === 'i' && okStatusImg(h.v))) return null;
+    return { k: h.k, v: h.v, x: r ? now + r : 0 };
+  }
+  function statusLeft(st, now) { if (!st || !st.x) return null; const ms = Math.max(0, st.x - now), m = Math.ceil(ms / 60000); return m >= 2880 ? { n: Math.round(m / 1440), u: 'd' } : m >= 120 ? { n: Math.round(m / 60), u: 'h' } : { n: Math.max(1, m), u: 'm' }; }
+
   G.ShilaFeatures = { TTLS, MAX_TTL, REACTIONS, MAX_PINS, TYPING_MS, TYPING_EVERY, validTtl, expiresAt, dueIds, cleanReaction, applyReaction, reactionSummary,
-    pinAdd, pinRemove, pinPrune, ctlKey, ctlEnqueue, ctlTake, typingMark, typingNow, shouldSendTyping, parseBuild, localBuild, updateAvailable, fwName, tsvStrongEnough };
+    pinAdd, pinRemove, pinPrune, ctlKey, ctlEnqueue, ctlTake, typingMark, typingNow, shouldSendTyping, parseBuild, localBuild, updateAvailable, fwName, tsvStrongEnough,
+    STATUS_HOURS, okEmoji, okStatusImg, hoursToMs, makeStatus, statusActive, statusHdr, cleanStatus, statusLeft };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

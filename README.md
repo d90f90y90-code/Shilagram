@@ -10,6 +10,7 @@ Serverless peer-to-peer messenger for Android (WebView app, PeerJS signaling onl
 - **Self-destructing messages** (per chat: 10 s / 1 min / 1 h / 1 day / 1 week, deleted on both sides), **forwarding** (with a "forwarded from" label), **pinned messages** bar, **emoji reactions**, **typing indicator** (can be switched off in Privacy)
 - **Two-step verification**: a password asked after the lock PIN (Privacy), with an optional hint; failed attempts are counted on disk with growing delays; also asked before exporting a backup
 - **Update check** (Settings → About): compares the installed build with the GitHub `latest` release and opens the APK download
+- **Status next to your name**: an emoji, a sticker from your library or a photo from your phone, with an optional timer (1 h … 30 days, or custom hours). Sent with the profile, so friends get it whenever they connect.
 - Photos, files (≤10 MB), voice messages, stickers, reply, edit, delete for me / for everyone
 - Voice and video calls (WebRTC)
 - Add friends by key or by QR code

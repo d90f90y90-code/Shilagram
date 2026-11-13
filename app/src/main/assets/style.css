@@ -189,3 +189,10 @@ img{-webkit-user-drag:none;user-drag:none}
 
 .shh{padding:16px 22px 6px;font-size:13px;opacity:.7}
 #tray img.gp{outline:2px solid var(--acc,#e9c46a);outline-offset:-2px;border-radius:8px}
+
+/* status */
+.stb{font-style:normal;font-size:.95em;white-space:nowrap}.stb img{width:18px;height:18px;border-radius:50%;vertical-align:-3px;object-fit:cover}
+.stprev{font-size:42px;text-align:center;min-height:60px;line-height:60px;color:var(--mut)}.stprev .stb{font-size:42px}.stprev img{width:56px;height:56px;vertical-align:middle}
+.emg{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin:6px 0}.emg button{font-size:21px;background:var(--bg2);border-radius:8px;padding:6px 0}
+.durs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.durs button{padding:6px 11px;border-radius:14px;background:var(--bg2);font-size:13px}.durs button.sel{background:var(--pri);color:#fff}
+#stkl{display:flex;flex-wrap:wrap;gap:8px;max-height:130px;overflow:auto;margin:6px 0}#stkl[hidden]{display:none}#stkl button{background:none;padding:2px}#stkl img{width:48px;height:48px;object-fit:contain}

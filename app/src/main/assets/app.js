@@ -286,7 +286,7 @@
     if (peer && !peer.disconnected) { poll(); checkRotation(); }
   }, 20000);
   setInterval(() => ensureDir(), 8000);
-  setInterval(sweep, 1000);
+  setInterval(sweep, 1000); setInterval(statusTick, 5000);
 
   // ---------- list & chat UI ----------
   function list() {
@@ -297,7 +297,7 @@
     rows.forEach(([id, o, g]) => {
       const r = document.createElement('div'); r.className = 'row';
       r.innerHTML = '<div class="av' + (!g && on(id) ? ' on' : '') + '"></div><div class="mid"><b></b><span></span></div><div class="meta"><div></div></div>';
-      avStyle(r.children[0], o.av, g ? '👥' : (o.name || '?')[0]); r.querySelector('b').textContent = o.name;
+      avStyle(r.children[0], o.av, g ? '👥' : (o.name || '?')[0]); setName(r.querySelector('b'), o.name, !g && o.st);
       const pv = o.lk === 'st' ? t('sticker') : o.lk === 'img' ? t('photo') : o.lk === 'vo' ? t('voice') : (o.lx || '');
       const tkl = F.typingNow(typing[id], Date.now()); r.querySelector('span').textContent = tkl.length ? t('typing') : pv || (g ? Object.keys(o.mem).length + t('members') : on(id) ? t('online') : t('offline'));
       r.querySelector('.meta div').textContent = o.last ? tm(o.last) : '';
@@ -313,7 +313,7 @@
   function back() { cur = null; $('#rotb').hidden = true; $('#chat').classList.remove('on'); list(); }
   function drawHead() {
     const o = ch(cur); if (!o) return;
-    $('#cn').textContent = o.name; avStyle($('#ca'), o.av, isG(cur) ? '👥' : (o.name || '?')[0]);
+    setName($('#cn'), o.name, !isG(cur) && o.st); avStyle($('#ca'), o.av, isG(cur) ? '👥' : (o.name || '?')[0]);
     const tk = F.typingNow(typing[cur], Date.now());
     $('#cs').textContent = tk.length ? (isG(cur) ? tk.map(k => nmOf(cur, k)).join('، ') + ' ' + (tk.length > 1 ? t('typingMany') : t('typing')) : t('typing')) : isG(cur) ? Object.keys(o.mem).map(k => nmOf(cur, k)).join('، ') : on(cur) ? t('online') + ' · ' + t('secure') : t('offline');
   }
@@ -439,7 +439,7 @@
     }));
   }
   const drawMine = () => avStyle($('#mav'), ME.av, (ME.name || '?')[0]);
-  const profileHdr = () => ({ t: 'pf', n: ME.name, u: ME.user || '', b: ME.bio || '', av: ME.av || '', cv: ME.cv || '', fc: ME.fc || '' });
+  const profileHdr = () => ({ t: 'pf', n: ME.name, u: ME.user || '', b: ME.bio || '', av: ME.av || '', cv: ME.cv || '', fc: ME.fc || '', st: F.statusHdr(ME.st, Date.now()) });
   function broadcastProfile() { Object.keys(conns).forEach(k => on(k) && sealTo(conns[k], profileHdr())); }
   function receiveProfile(k, h) {
     const o = S.c[k]; if (!o) return; const n = noCtl(h.n, 30); if (n) o.name = n;
@@ -447,16 +447,72 @@
     const av = String(h.av || ''); if (SG.okAv(av)) { if (av) o.av = av; else delete o.av; }
     const cv = String(h.cv || ''); if (SG.okImg(cv, 60000)) { if (cv) o.cv = cv; else delete o.cv; }
     const fc = String(h.fc || ''); if (FCRE.test(fc)) o.fc = fc; else delete o.fc;
+    const st = F.cleanStatus(h.st, Date.now()); if (st) o.st = st; else delete o.st;
     save(); list(); if (cur) drawHead(); if (viewKey === k && $('#pg-view').classList.contains('on')) fillView(k);
   }
   // view page: what other people see (and the owner, with an Edit button)
   function fillView(key) {
     const me = key === ME.key, o = me ? ME : S.c[key]; if (!o) return; viewKey = key; const user = me ? o.user : o.un;
     $('#vt').textContent = o.name; bigAv($('#vav'), o.av, o.fc); $('#vcov').style.backgroundImage = 'url("' + (o.cv || DEF_COVER) + '")';
-    $('#vn').textContent = o.name; $('#vu').textContent = user ? '@' + user : '—'; $('#vk').textContent = key; $('#vb').textContent = o.bio || '—';
+    setName($('#vn'), o.name, o.st); $('#vstr').style.display = me ? '' : 'none'; if (me) statusRow(); $('#vu').textContent = user ? '@' + user : '—'; $('#vk').textContent = key; $('#vb').textContent = o.bio || '—';
     $('#vedit').style.display = me ? '' : 'none'; $('#vsec').style.display = me ? 'none' : '';
     if (!me) { C.fingerprint(ID.pub).then(f => $('#secme').textContent = f); if (o.pk) C.fingerprint(C.unb64(o.pk)).then(f => $('#secthem').textContent = f); else $('#secthem').textContent = t('notVerified'); }
   }
+
+  // ---------- status: emoji / sticker / photo next to the name, with an optional timer ----------
+  const stNode = st => { if (!F.statusActive(st, Date.now())) return null; const s = document.createElement('em'); s.className = 'stb'; if (st.k === 'e') s.textContent = st.v; else { const im = new Image(); im.alt = ''; im.src = st.v; s.append(im); } return s; };
+  function setName(el, name, st) { el.textContent = name; const n = stNode(st); if (n) { el.append(' '); el.append(n); } }
+  function statusRow() {
+    const el = $('#vstv'), n = stNode(ME.st), lv = F.statusLeft(ME.st, Date.now()); el.textContent = '';
+    if (n) { el.append(n); if (lv) el.append(' · ' + t('stLeft') + lv.n + ' ' + t('st_' + lv.u)); } else el.textContent = t('stSet');
+  }
+  function statusTick() {
+    const now = Date.now(); let changed = false;
+    if (ME.st && !F.statusActive(ME.st, now)) { delete ME.st; DB.set('me', ME); broadcastProfile(); changed = true; }
+    for (const o of Object.values(S.c)) if (o.st && !F.statusActive(o.st, now)) { delete o.st; changed = true; }
+    if (changed) { save(); list(); if (cur) drawHead(); if (viewKey && $('#pg-view').classList.contains('on')) fillView(viewKey); }
+  }
+  async function thumbData(blob) { // sticker -> tiny data URL that fits the status size limit
+    const bm = await createImageBitmap(blob);
+    for (const sz of [64, 48, 40]) {
+      const c = document.createElement('canvas'); c.width = c.height = sz; const g = c.getContext('2d'), k = Math.min(sz / bm.width, sz / bm.height), w = bm.width * k, h = bm.height * k;
+      g.drawImage(bm, (sz - w) / 2, (sz - h) / 2, w, h);
+      for (const q of [.8, .6]) { const u = c.toDataURL('image/webp', q); if (F.okStatusImg(u)) return u; }
+      const u = c.toDataURL('image/png'); if (F.okStatusImg(u)) return u;
+    } return null;
+  }
+  const EMO = ['😀', '😎', '🥳', '😴', '🤔', '😍', '🤒', '😡', '🙏', '🔥', '💼', '🎮', '📚', '✈️', '🍕', '☕', '🏠', '🏋️', '🎧', '🌙', '❤️', '👍', '🎉', '💤'];
+  const DURK = { 1: 'ttl1h', 4: 'st4h', 12: 'st12h', 24: 'ttl1d', 72: 'st3d', 168: 'ttl7d', 0: 'stNever' };
+  let stDraft = null;
+  function stRender() {
+    const pv = $('#stprev'); pv.textContent = ''; const n = stDraft.v ? stNode({ k: stDraft.k, v: stDraft.v, x: 0 }) : null; if (n) pv.append(n); else pv.textContent = t('stNone');
+    $$('#stdur button').forEach(b => b.classList.toggle('sel', stDraft.h === +b.dataset.h));
+  }
+  function openStatus() {
+    const c = F.statusActive(ME.st, Date.now()) ? ME.st : null; stDraft = { k: c ? c.k : 'e', v: c ? c.v : '', h: 24 };
+    $('#stin').placeholder = t('stCustom'); $('#stin').value = ''; $('#sthr').placeholder = t('stCustomH'); $('#sthr').value = ''; $('#ster').textContent = ''; $('#stkl').hidden = true;
+    const E = $('#stemg'); E.innerHTML = ''; EMO.forEach(e => { const b = document.createElement('button'); b.textContent = e; b.onclick = () => { stDraft.k = 'e'; stDraft.v = e; $('#stin').value = ''; stRender(); }; E.append(b); });
+    const D = $('#stdur'); D.innerHTML = ''; F.STATUS_HOURS.forEach(h => { const b = document.createElement('button'); b.dataset.h = h; b.textContent = t(DURK[h]); b.onclick = () => { stDraft.h = h; $('#sthr').value = ''; stRender(); }; D.append(b); });
+    $('#stclr').style.display = c ? '' : 'none'; stRender(); sheet('st');
+  }
+  $('#vstr').onclick = openStatus;
+  $('#stin').oninput = e => { const v = e.target.value.trim(); if (F.okEmoji(v)) { stDraft.k = 'e'; stDraft.v = v; stRender(); } };
+  $('#sthr').oninput = e => { stDraft.h = e.target.value === '' ? 24 : +e.target.value; stRender(); };
+  $('#stsk').onclick = async () => {
+    const B = $('#stkl'); B.hidden = !B.hidden; if (B.hidden) return; B.innerHTML = ''; const L = await DB.stickers(); if (!L.length) { B.textContent = t('stNoStk'); return; }
+    L.forEach(s => { const b = document.createElement('button'), im = new Image(); im.src = URL.createObjectURL(s.b); b.append(im); b.onclick = async () => { const u = await thumbData(s.b).catch(() => null); if (!u) return toast(t('stNoImg')); stDraft = { k: 'i', v: u, h: stDraft.h }; B.hidden = true; stRender(); }; B.append(b); });
+  };
+  $('#stph').onclick = () => $('#stfile').click();
+  $('#stfile').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return; const keep = stDraft;
+    try { const u = await cropImage(f, { w: 64, h: 64, circle: 1, max: 8000 }); stDraft = keep; if (u && F.okStatusImg(u)) { stDraft.k = 'i'; stDraft.v = u; } else if (u) toast(t('stNoImg')); } catch (x) { toast(t('stNoImg')); }
+    sheet('st'); stRender();
+  };
+  $('#stok').onclick = () => {
+    const st = F.makeStatus(stDraft.k, stDraft.v, stDraft.h, Date.now()); if (!st) return ($('#ster').textContent = t('stBad'));
+    ME.st = st; DB.set('me', ME); broadcastProfile(); sheet(0); if (viewKey === ME.key) fillView(ME.key); toast(t('stSaved'));
+  };
+  $('#stclr').onclick = () => { delete ME.st; DB.set('me', ME); broadcastProfile(); sheet(0); if (viewKey === ME.key) fillView(ME.key); toast(t('stCleared')); };
   function openProfileView(key) { fillView(key); showPage('view'); }
   $('#mav').onclick = () => openProfileView(ME.key);
   $('#vkr').onclick = () => copyText(viewKey);
@@ -1468,8 +1524,8 @@
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
-  if (window.__DEBUG) window.__app = { S, conns, rot, seen, on, checkRotation, dirLookup, open, list, sendMsg, sweep, react, togglePin, getM, handlePlain, sendCtlQ, tsvLoop, askPassword, saveTsv, get TSV() { return TSV; }, get M() { return M; }, get typing() { return typing; }, get dirPeer() { return dirPeer; }, get call() { return call; } };
-  await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); sweep(); if (!ME.user) setTimeout(askUser, 500);
+  if (window.__DEBUG) window.__app = { ME, fillView, openStatus, statusTick, receiveProfile, S, conns, rot, seen, on, checkRotation, dirLookup, open, list, sendMsg, sweep, react, togglePin, getM, handlePlain, sendCtlQ, tsvLoop, askPassword, saveTsv, get TSV() { return TSV; }, get M() { return M; }, get typing() { return typing; }, get dirPeer() { return dirPeer; }, get call() { return call; } };
+  await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); sweep(); statusTick(); if (!ME.user) setTimeout(askUser, 500);
   if (NATIVE && S.set.autoUpd && Date.now() - (S.updAt || 0) > 12 * 3600e3) setTimeout(async () => { S.updAt = Date.now(); save(); if (await checkUpdate(true)) toast(t('updBanner')); }, 8000);
   if (NATIVE && NATIVE.ready) try { NATIVE.ready(); } catch (e) {}
 })();
