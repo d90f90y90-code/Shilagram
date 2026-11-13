@@ -59,3 +59,21 @@ test('validState keeps the new look fields and rejects bad ones', () => {
   assert.equal(SG.validState(Object.assign(base(), { cvh: 'nothex' })), null); assert.equal(SG.validState(Object.assign(base(), { fc: 'javascript:1' })), null);
   assert.deepEqual(Object.keys(SG.canon(s)).slice(-4), ['fc', 'ds', 'cvh', 'gfh']);
 });
+
+test('group sticker pack: only those with the info permission add/remove; state stays valid', () => {
+  const H1 = 'a'.repeat(32), H2 = 'b'.repeat(32), g = base();
+  assert.equal(SG.applyOp(g, M, { a: 'sa', h: H1 }), null);                         // ordinary member cannot
+  const g1 = SG.applyOp(g, O, { a: 'sa', h: H1 }); assert.deepEqual(g1.sp, [H1]);
+  assert.equal(SG.applyOp(g1, O, { a: 'sa', h: H1 }), null);                        // no duplicates
+  assert.equal(SG.applyOp(g1, O, { a: 'sa', h: 'zz' }), null);                      // bad hash
+  const ga = SG.applyOp(g1, O, { a: 'role', k: A, v: 'a' });                        // an assistant (moderator) may
+  const g2 = SG.applyOp(ga, A, { a: 'sa', h: H2 }); assert.deepEqual(g2.sp, [H1, H2]);
+  assert.equal(SG.applyOp(g2, M, { a: 'sr', h: H1 }), null);
+  const g3 = SG.applyOp(g2, A, { a: 'sr', h: H1 }); assert.deepEqual(g3.sp, [H2]);
+  const g4 = SG.applyOp(g3, O, { a: 'sr', h: H2 }); assert.equal(g4.sp, undefined);  // empty pack leaves no field
+  assert.equal(SG.applyOp(g4, O, { a: 'sr', h: H2 }), null);
+  assert.ok(SG.validState(JSON.parse(JSON.stringify(SG.canon(g2)))).sp.length === 2);
+  const bad = SG.canon(g2); bad.sp = [H1, H1]; assert.equal(SG.validState(bad), null);
+  let full = base(); for (let i = 0; i < SG.SP_MAX; i++) full = SG.applyOp(full, O, { a: 'sa', h: i.toString(16).padStart(32, '0') });
+  assert.equal(SG.applyOp(full, O, { a: 'sa', h: 'f'.repeat(32) }), null);          // pack is full
+});

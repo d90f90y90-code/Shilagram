@@ -121,12 +121,18 @@ public class MainActivity extends Activity {
     }
 
     class Bridge {
-        @JavascriptInterface public void notify(String title, String text) {
+        // one notification per chat (a new message updates it); "-" = one-off notices such as friend requests or calls
+        @JavascriptInterface public void notify(String title, String text, String chat) {
             Intent in = new Intent(MainActivity.this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             PendingIntent pi = PendingIntent.getActivity(MainActivity.this, 0, in, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
             android.app.Notification n = new android.app.Notification.Builder(MainActivity.this, "msgs").setSmallIcon(R.drawable.ic_fg)
                 .setContentTitle(title).setContentText(text).setContentIntent(pi).setAutoCancel(true).build();
-            getSystemService(NotificationManager.class).notify(notifId++ % 1000 + 100, n);
+            String tag = chat == null || chat.isEmpty() || "-".equals(chat) ? "x" + (notifId++ % 50) : "c:" + chat;
+            getSystemService(NotificationManager.class).notify(tag, 1, n);
+        }
+        /** The chat was opened / is on screen: take its notification out of the shade. */
+        @JavascriptInterface public void clearNotif(String chat) {
+            if (chat != null && !chat.isEmpty()) getSystemService(NotificationManager.class).cancel("c:" + chat, 1);
         }
         @JavascriptInterface public void exportFile(final String name, final String mime, String b64) {
             pendData = Base64.decode(b64, Base64.DEFAULT);

@@ -32,6 +32,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) { DB.set('state', S); window.__hiddenAt = Date.now(); } else { if (PIN && window.__hiddenAt && S.set.lockAfter >= 0 && Date.now() - window.__hiddenAt >= S.set.lockAfter * 1000) unlockLoop(); poll(); if (peer && peer.disconnected) try { peer.reconnect(); } catch (e) {} } });
   save();
 
+  const VP = { el: null, mid: null }; // the voice message that is playing
   let rot = {}, seen = {}, act = {}, bootT = Date.now(), M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null, tsvRes = null, pwRes = null, fwMsg = null, pinCur = 0, typSent = {}, typing = {}, updInfo = null;
   const ch = id => S.c[id] || S.g[id], isG = id => !!S.g[id], on = k => !!(conns[k] && conns[k].auth);
   const members = id => isG(id) ? Object.keys(S.g[id].mem).filter(k => k !== ME.key) : [id];
@@ -46,9 +47,11 @@
   const blobB64 = b => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result.split(',')[1]); f.readAsDataURL(b); });
   const b64Blob = (s, mime) => new Blob([C.unb64(s)], { type: mime || 'application/octet-stream' });
 
+  const clearNotif = id => { try { if (NATIVE && NATIVE.clearNotif && id) NATIVE.clearNotif(id); } catch (e) {} };
   function notify(title, text, id) {
-    if (!NATIVE || !S.set.nt || !(document.hidden || cur !== id)) return;
-    try { NATIVE.notify(title, S.set.np ? t('newMsg') : text); } catch (e) {}
+    if (!NATIVE || !S.set.nt) return;
+    if (!document.hidden && cur === id) { clearNotif(id); return; } // you are looking at this chat: no notification, and drop any old one
+    try { NATIVE.notify(title, S.set.np ? t('newMsg') : text, id || '-'); } catch (e) {}
   }
   function toast(m) { const e = $('#toast'); e.textContent = m; e.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => e.style.display = 'none', 1600); }
   function copyText(x) {
@@ -191,12 +194,16 @@
       if ((op.a === 'cv' || op.a === 'gf') && op.h) { // a picture sent by an assistant: verify it matches its hash before accepting
         const d = String(h.op.d || ''); if (!okAsset(op.a, d) || (await C.sha32(d)) !== op.h) return; S.ga[op.h] = d;
       }
+      if (op.a === 'sa' && op.h) { // a sticker added by an assistant: verify, then keep it so every member can fetch it from us
+        const d = String(h.op.d || ''); if (!okAsset('sp', d) || (await C.sha32(d)) !== op.h) return; await gpSave(op.h, d);
+      }
       await commitGroup(h.g, ns);
     }
-    else if (h.t === 'gar') { const hh = String(h.h || ''); if (SG.HASH.test(hh) && S.ga[hh] && Object.values(S.g).some(g => g.mem[k] && (g.cvh === hh || g.gfh === hh))) sealTo(c, { t: 'gad', h: hh, d: S.ga[hh] }); }
+    else if (h.t === 'gar') { const hh = String(h.h || ''); if (SG.HASH.test(hh) && Object.values(S.g).some(g => g.mem[k] && (g.cvh === hh || g.gfh === hh || (g.sp || []).includes(hh)))) { const d = S.ga[hh] || await gpData(hh); if (d) sealTo(c, { t: 'gad', h: hh, d }); } }
     else if (h.t === 'gad') {
       const hh = String(h.h || ''), d = String(h.d || '');
-      if (SG.HASH.test(hh) && !S.ga[hh] && Object.values(S.g).some(g => g.mem[k] && (g.cvh === hh || g.gfh === hh)) && /^data:image\/(jpeg|gif|webp);base64,/.test(d) && okAsset(d.startsWith('data:image/jpeg') ? 'cv' : 'gf', d) && (await C.sha32(d)) === hh) { S.ga[hh] = d; save(); if ($('#pg-grp').classList.contains('on')) fillGroup(); }
+      if (SG.HASH.test(hh) && !GPS.has(hh) && inPack(hh, k) && okAsset('sp', d) && (await C.sha32(d)) === hh) { await gpSave(hh, d); if ($('#pg-gst').classList.contains('on')) renderGst(); }
+      else if (SG.HASH.test(hh) && !S.ga[hh] && Object.values(S.g).some(g => g.mem[k] && (g.cvh === hh || g.gfh === hh)) && /^data:image\/(jpeg|gif|webp);base64,/.test(d) && okAsset(d.startsWith('data:image/jpeg') ? 'cv' : 'gf', d) && (await C.sha32(d)) === hh) { S.ga[hh] = d; save(); if ($('#pg-grp').classList.contains('on')) fillGroup(); }
     }
     else if (h.t === 'gci') onGroupInvite(k, h);
     else if (h.t === 'gcj') { const g = S.g[h.g]; if (call && call.group === h.g && g && g.mem[k] && !call.parts[k]) callPart(k); }
@@ -299,7 +306,7 @@
     });
   }
   async function open(id) {
-    cur = id; ch(id).u = 0; save(); M[id] = await DB.chatMsgs(id); clearReply();
+    cur = id; ch(id).u = 0; save(); clearNotif(id); M[id] = await DB.chatMsgs(id); clearReply();
     $('#chat').classList.add('on'); $('#tray').classList.remove('on'); $('#bc1').style.display = $('#bc2').style.display = '';
     drawHead(); updateComposer(); pinCur = 0; draw(1); drawPin(); list(); showRot();
   }
@@ -328,7 +335,7 @@
     const ne = (m.rx || {})[ME.key] === e ? '' : e; m.rx = F.applyReaction(m.rx, ME.key, ne); await DB.putMsg(m); draw(); sendCtlQ(cur, { t: 'rx', i: m.mid, e: ne });
   }
   function draw(stick) {
-    const o = ch(cur); if (!o) return; urls.forEach(u => URL.revokeObjectURL(u)); urls = [];
+    const o = ch(cur); if (!o) return; const live = VP.el && !VP.el.paused ? VP.el.src : null; urls.forEach(u => u !== live && URL.revokeObjectURL(u)); urls = live ? [live] : [];
     const Mm = $('#ms'), nearEnd = Mm.scrollHeight - Mm.scrollTop - Mm.clientHeight < 120; Mm.innerHTML = '';
     const url = b => { const u = URL.createObjectURL(b); urls.push(u); return u; };
     (M[cur] || []).slice(-150).forEach(m => {
@@ -339,7 +346,7 @@
       if (m.del) { const s = document.createElement('span'); s.textContent = t('deleted'); b.append(s); }
       else if (m.kind === 'st' && m.b) { const im = document.createElement('img'); im.className = 'st'; im.src = url(m.b); if (!m.me) im.onclick = () => { if (confirm(t('saveSt'))) saveSticker(m.b); }; b.append(im); }
       else if (m.kind === 'img' && m.b) { const im = document.createElement('img'); im.className = 'ph'; im.src = url(m.b); im.onclick = () => openChatPhoto(m); b.append(im); }
-      else if (m.kind === 'vo' && m.b) { const a = document.createElement('audio'); a.controls = true; a.preload = 'metadata'; a.src = url(m.b); b.append(a); }
+      else if (m.kind === 'vo' && m.b) { const a = VP.el && VP.mid === m.mid && !VP.el.paused ? VP.el : Object.assign(document.createElement('audio'), { controls: true, preload: 'metadata', src: url(m.b) }); a.dataset.mid = m.mid; b.append(a); }
       else if (m.kind === 'file' && m.b) { const f = document.createElement('div'); f.className = 'fl'; f.innerHTML = '<span>📎</span><u></u>'; f.lastChild.textContent = (m.name || 'file') + ' (' + Math.ceil(m.b.size / 1024) + ' KB)'; f.onclick = () => saveBlob(m); b.append(f); }
       else if (m.kind !== 't' && !m.b) { const s = document.createElement('span'); s.textContent = t('mediaGone'); s.style.opacity = '.6'; b.append(s); }
       else { const s = document.createElement('span'); s.textContent = m.x || ''; b.append(s); }
@@ -351,6 +358,7 @@
       Mm.append(b);
     });
     if (stick || nearEnd) Mm.scrollTop = Mm.scrollHeight;
+    if (VP.el && !VP.el.isConnected) { try { VP.el.pause(); } catch (e) {} VP.el = null; } // its message is gone (other chat / deleted)
   }
   function saveBlob(m) {
     blobB64(m.b).then(b => {
@@ -371,12 +379,12 @@
       const x = (dialog(t('edit'), m.x) || '').trim(); if (!x || x === m.x) return;
       m.x = x; m.ed = 1; await DB.putMsg(m); sendCtl(cur, { t: 'ed', i: m.mid, x }); await refreshMeta(cur); draw(); list();
     });
-    if (!m.del && m.b && m.kind !== 'st') add(t('save'), () => saveBlob(m));
+    if (!m.del && m.b && m.kind !== 'st') add(t('dlAct'), () => downloadMsg(m));
     add(t('delMe'), async () => { await DB.delMsg(m.id); M[cur] = M[cur].filter(x => x.id !== m.id); await refreshMeta(cur); draw(); list(); });
     if (m.me && !m.del) add(t('delAll'), async () => {
       m.del = 1; delete m.x; delete m.b; delete m.pend; m.p = []; await DB.putMsg(m); sendCtl(cur, { t: 'd', i: m.mid }); await refreshMeta(cur); draw(); list();
     });
-    add(t('cancelAct'), () => {}); sheet('act');
+    sheet('act');
   }
   function setReply(m) { replyTo = m; $('#rtx').textContent = t('replyingTo') + ' ' + nmOf(cur, m.f) + ': ' + pvText(m); $('#rbar').classList.add('on'); $('#t').focus(); }
   function clearReply() { replyTo = null; $('#rbar').classList.remove('on'); }
@@ -391,7 +399,7 @@
   // ---------- pages ----------
   const pgStack = [], PG_ON = {};
   function showPage(n) { const el = $('#pg-' + n); if (!el || pgStack[pgStack.length - 1] === n) return; pgStack.push(n); el.style.zIndex = 10 + pgStack.length; el.classList.add('on'); if (PG_ON[n]) PG_ON[n](); }
-  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'dl' || n === 'gmedia') dlClear(); if (n === 'shfc' && pgStack[pgStack.length - 1] === 'shf') renderShf(); }
+  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'gmedia' || n === 'shf') dlClear(); if (n === 'shfc' && pgStack[pgStack.length - 1] === 'shf') renderShf(); }
   $$('[data-pg]').forEach(b => b.onclick = () => showPage(b.dataset.pg)); $$('.pback').forEach(b => b.onclick = closePage);
   const svgUri = x => 'data:image/svg+xml,' + encodeURIComponent(x);
   const DEF_AV = svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#d9cdf0"/><circle cx="100" cy="78" r="38" fill="#7a65a8"/><path d="M28 200c0-42 32-72 72-72s72 30 72 72z" fill="#7a65a8"/></svg>');
@@ -554,17 +562,17 @@
     const ms = (await DB.allMsgs()).filter(m => m.b && !m.del && ['img', 'vo', 'file'].includes(m.kind) && (!chatId || m.chat === chatId)).sort((a, b) => b.ts - a.ts);
     (chatId ? [] : S.recs).forEach(rc => { const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"><svg class="ic"><use href="#i-video"/></svg></div><div class="mid"><b></b><span></span></div><button class="x2">✕</button>';
       r.querySelector('b').textContent = t('recDl') + ' · ' + nmOf(rc.k, rc.k); r.querySelector('.mid span').textContent = Math.ceil((rc.size || 0) / 1024) + ' KB · ' + new Date(rc.ts).toLocaleString(I18N.lang);
-      r.onclick = async () => { const b = await DB.get('rec:' + rc.id); if (b) saveBlob({ b, name: rc.name, mime: rc.mime, kind: 'file' }); };
-      r.querySelector('.x2').onclick = async e => { e.stopPropagation(); if (!confirm(t('delSt'))) return; await DB.del('rec:' + rc.id); S.recs = S.recs.filter(x => x.id !== rc.id); save(); PG_ON.dl(); }; L.append(r); });
+      r.onclick = () => dlRec(rc);
+      r.querySelector('.x2').onclick = async e => { e.stopPropagation(); if (!confirm(t('delSt'))) return; await DB.del('rec:' + rc.id); S.recs = S.recs.filter(x => x.id !== rc.id); save(); renderShf(); }; L.append(r); });
     if (!ms.length && (chatId || !S.recs.length)) { L.innerHTML = '<div class="empty"><svg class="ill"><use href="#ill-empty"/></svg>' + t('noDownloads') + '</div>'; return; }
     ms.forEach(m => {
       const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"></div><div class="mid"><b></b><span></span></div><svg class="ic"><use href="#i-download"/></svg>';
       const th = r.firstChild; if (m.kind === 'img') { const u = URL.createObjectURL(m.b); dlUrls.push(u); th.style.backgroundImage = 'url(' + u + ')'; } else th.innerHTML = '<svg class="ic"><use href="#i-' + (m.kind === 'vo' ? 'mic' : 'file') + '"/></svg>';
       r.querySelector('b').textContent = m.name || (m.kind === 'vo' ? t('voice') : t('photo'));
-      r.querySelector('.mid span').textContent = Math.ceil(m.b.size / 1024) + ' KB · ' + ((ch(m.chat) || {}).name || '') + ' · ' + new Date(m.ts).toLocaleDateString(I18N.lang); r.onclick = () => saveBlob(m); L.append(r);
+      r.querySelector('.mid span').textContent = Math.ceil(m.b.size / 1024) + ' KB · ' + ((ch(m.chat) || {}).name || '') + ' · ' + new Date(m.ts).toLocaleDateString(I18N.lang); r.onclick = () => downloadMsg(m); L.append(r);
     });
   }
-  PG_ON.dl = () => renderDl($('#dll')); PG_ON.gmedia = () => renderDl($('#gml2'), cur);
+  PG_ON.gmedia = () => renderDl($('#gml2'), cur);
   function renderStPage() {
     const G = $('#stg'); G.innerHTML = ''; const plus = document.createElement('button'); plus.className = 'c plus'; plus.innerHTML = '<svg class="ic" style="width:34px;height:34px"><use href="#i-sticker"/></svg>';
     plus.onclick = () => { sk = {}; skDraw(); $('#cap').value = ''; $('#zm').value = 1; sheet('s'); }; G.append(plus);
@@ -745,12 +753,12 @@
   };
   // ---------- group page: cover + framed photo, tool row, members | description + animated picture ----------
   const DEF_GCOVER = svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0a0716"/><stop offset="1" stop-color="#2a1856"/></linearGradient></defs><rect width="800" height="400" fill="url(#g)"/><g fill="#e9c46a" opacity=".8"><circle cx="70" cy="60" r="2.5"/><circle cx="210" cy="320" r="2"/><circle cx="640" cy="70" r="3"/><circle cx="730" cy="260" r="2"/><circle cx="450" cy="40" r="2"/></g><circle cx="700" cy="330" r="90" fill="#8b5cf6" opacity=".2"/></svg>');
-  const GMAX = { cv: 60000, gf: 450000 };
-  const okAsset = (kind, d) => typeof d === 'string' && d.length <= GMAX[kind] && (kind === 'cv' ? /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/ : /^data:image\/(gif|webp);base64,[A-Za-z0-9+/=]+$/).test(d);
+  const GMAX = { cv: 60000, gf: 450000, sp: 150000 };
+  const okAsset = (kind, d) => typeof d === 'string' && d.length <= GMAX[kind] && (kind === 'cv' ? /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/ : kind === 'sp' ? /^data:image\/(webp|png|jpeg);base64,[A-Za-z0-9+/=]+$/ : /^data:image\/(gif|webp);base64,[A-Za-z0-9+/=]+$/).test(d);
   function wantAssets() { // ask online members for group pictures we do not have yet (they are verified against their hash)
-    Object.values(S.g).forEach(g => [g.cvh, g.gfh].forEach(h => { if (h && !S.ga[h]) Object.keys(g.mem).forEach(k => { if (k !== ME.key && on(k)) sealTo(conns[k], { t: 'gar', h }); }); }));
+    Object.values(S.g).forEach(g => [g.cvh, g.gfh, ...(g.sp || [])].forEach(h => { if (h && !S.ga[h] && !GPS.has(h)) Object.keys(g.mem).forEach(k => { if (k !== ME.key && on(k)) sealTo(conns[k], { t: 'gar', h }); }); }));
   }
-  function pruneGa() { const keep = new Set(); Object.values(S.g).forEach(g => { if (g.cvh) keep.add(g.cvh); if (g.gfh) keep.add(g.gfh); (g.pend || []).forEach(op => op.h && keep.add(op.h)); }); Object.keys(S.ga).forEach(h => { if (!keep.has(h)) delete S.ga[h]; }); }
+  function pruneGa() { pruneGp(); const keep = new Set(); Object.values(S.g).forEach(g => { if (g.cvh) keep.add(g.cvh); if (g.gfh) keep.add(g.gfh); (g.pend || []).forEach(op => op.h && keep.add(op.h)); }); Object.keys(S.ga).forEach(h => { if (!keep.has(h)) delete S.ga[h]; }); }
   function fillGroup() {
     const g = cur && S.g[cur]; if (!g) return; const me = ME.key, add = !g.left && SG.can(g, me, 'add');
     $('#gcov').style.backgroundImage = 'url("' + (g.cvh && S.ga[g.cvh] ? S.ga[g.cvh] : DEF_GCOVER) + '")'; bigAv($('#gpav'), g.av, g.fc);
@@ -769,6 +777,45 @@
     });
   }
   function openGroupInfo(refreshOnly) { fillGroup(); if (!refreshOnly) showPage('grp'); }
+  // ---------- group sticker pack: one set of stickers that every member holds ----------
+  const GPS = new Set(); // hashes of group stickers stored on this phone
+  DB.gpStickers().then(L => L.forEach(x => GPS.add(x.h)));
+  const inPack = (h, k) => Object.values(S.g).some(g => (!k || g.mem[k]) && (g.sp || []).includes(h));
+  const readDataUrl = b => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
+  async function gpSave(h, d) { const b = b64Blob(d.slice(d.indexOf(',') + 1), d.slice(5, d.indexOf(';'))); await DB.putSticker({ id: 'gp_' + h, ts: Date.now(), b, gp: 1, h, d }); GPS.add(h); }
+  async function gpData(h) { const x = GPS.has(h) && await DB.getSticker('gp_' + h); return x ? x.d : null; }
+  async function pruneGp() { // forget pack stickers no group uses any more (a grace period keeps one that is still on its way to the owner)
+    const keep = new Set(); Object.values(S.g).forEach(g => { (g.sp || []).forEach(h => keep.add(h)); (g.pend || []).forEach(op => op.a === 'sa' && op.h && keep.add(op.h)); });
+    for (const x of await DB.gpStickers()) if (!keep.has(x.h) && Date.now() - x.ts > 600000) { await DB.delSticker(x.id); GPS.delete(x.h); }
+  }
+  async function stickerData(f) { // any picture -> 512 px webp small enough for the pack
+    const bm = await createImageBitmap(f); let sc = Math.min(1, 512 / Math.max(bm.width, bm.height));
+    for (const q of [.85, .7, .55, .4]) {
+      const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(bm.width * sc)); cv.height = Math.max(1, Math.round(bm.height * sc)); cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
+      const b = await new Promise(r => cv.toBlob(r, 'image/webp', q)); if (!b) return ''; const d = await readDataUrl(b); if (okAsset('sp', d)) return d; sc *= .8;
+    }
+    return '';
+  }
+  async function renderGst() {
+    const G = $('#gstg'), g = S.g[cur]; G.innerHTML = ''; if (!g) return;
+    const can = !g.left && SG.can(g, ME.key, 'info'), sp = g.sp || []; $('#gstn').textContent = can ? '' : t('gstNote');
+    if (can && sp.length < SG.SP_MAX) { const plus = document.createElement('button'); plus.className = 'c plus'; plus.innerHTML = '<svg class="ic" style="width:34px;height:34px"><use href="#i-sticker"/></svg>'; plus.onclick = () => $('#gstfile').click(); G.append(plus); }
+    for (const h of sp) {
+      const c = document.createElement('div'); c.className = 'c'; const x = GPS.has(h) && await DB.getSticker('gp_' + h);
+      if (x) { const im = new Image(); im.src = URL.createObjectURL(x.b); c.append(im); } else c.textContent = '⏳';
+      if (can) { const rm = document.createElement('button'); rm.textContent = '✕'; rm.onclick = async () => { if (confirm(t('delSt'))) { await groupAct(cur, { a: 'sr', h }); renderGst(); } }; c.append(rm); }
+      G.append(c);
+    }
+  }
+  PG_ON.gst = renderGst;
+  $('#gstfile').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ''; const g = S.g[cur]; if (!f || !g) return;
+    if (!SG.can(g, ME.key, 'info')) return alert(t('noPerm')); if ((g.sp || []).length >= SG.SP_MAX) return alert(t('gstFull'));
+    let d = ''; try { d = await stickerData(f); } catch (x) {} if (!d) return alert(t('tooBig'));
+    const h = await C.sha32(d); if ((g.sp || []).includes(h)) return;
+    await gpSave(h, d); await groupAct(cur, { a: 'sa', h, d }); renderGst();
+  };
+
   async function groupSetAsset(kind, d) { const h = await C.sha32(d); S.ga[h] = d; save(); if (S.g[cur]) await groupAct(cur, { a: kind, h, d }); }
   $('#gfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, AVO); if (u) await groupAct(cur, { a: 'av', v: u }); } catch (x) { alert(t('tooBig')); } };
   $('#gcvfile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const u = await cropImage(f, COVO); if (u) await groupSetAsset('cv', u); } catch (x) { alert(t('tooBig')); } };
@@ -791,7 +838,7 @@
       if (!g.left && g.owner && g.owner !== ME.key && on(g.owner)) await sealTo(conns[g.owner], { t: 'gop', g: id, op: { a: 'leave' } });
       await DB.delChat(id); delete S.g[id]; delete M[id]; save(); while (pgStack.length) closePage(); back();
     });
-    add(t('cancelAct'), () => {}); sheet('act');
+    sheet('act');
   }
   function openAdmins() {
     const g = S.g[cur]; if (!g) return; const owner = g.owner === ME.key, L = $('#gadl'); L.innerHTML = '';
@@ -820,7 +867,7 @@
     cand.forEach(([k, o]) => { const d = document.createElement('label'); d.className = 'chk'; d.innerHTML = '<input type="checkbox" value="' + k + '"><span></span>'; d.lastChild.textContent = o.name; L.append(d); }); sheet('ga');
   };
   $('#gac').onclick = async () => { const ks = [...$$('#gal input:checked')].map(i => i.value); for (const k of ks) await groupAct(cur, { a: 'add', k, n: S.c[k].name }); sheet(0); fillGroup(); };
-  $('#tbst').onclick = () => showPage('st'); $('#tbme').onclick = () => showPage('gmedia'); $('#tbad').onclick = openAdmins; $('#tbset').onclick = groupSettings;
+  $('#tbst').onclick = () => showPage('gst'); $('#tbme').onclick = () => showPage('gmedia'); $('#tbad').onclick = openAdmins; $('#tbset').onclick = groupSettings;
   $('#tbse').onclick = () => { $('#gsq').value = ''; $('#gsr').innerHTML = ''; $('#gsq').placeholder = t('gSearchPh'); showPage('gsearch'); setTimeout(() => $('#gsq').focus(), 320); };
   function jumpTo(mid) { setTimeout(() => { const b = document.querySelector('#ms .b[data-mid="' + mid + '"]'); if (b) { b.scrollIntoView({ block: 'center' }); b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 1700); } }, 380); }
   $('#gsq').oninput = async e => {
@@ -838,7 +885,7 @@
     if (!isG(cur)) add('⛔ ' + t('block'), () => { if (!confirm(t('confirmBlock'))) return; S.block[cur] = 1; try { conns[cur] && conns[cur].close(); } catch (e) {} save(); toast(t('cleared')); });
     add('🗑 ' + t('delChat'), async () => { if (!confirm(t('delChat'))) return; await DB.delChat(cur); delete S.c[cur]; delete S.g[cur]; delete M[cur]; save(); back(); });
     add('⏳ ' + t('ttlTitle') + ' · ' + ttlLabel(ch(cur).ttl), () => openTtl());
-    add(t('cancelAct'), () => {}); sheet('act');
+    sheet('act');
   };
   function openContactInfo() { openProfileView(cur); }
   $('#srt').onclick = () => { const o = S.c[viewKey]; if (o) { delete o.pk; save(); warn(0); fillView(viewKey); } };
@@ -922,6 +969,7 @@
   async function trayDraw() {
     const T = $('#tray'); T.innerHTML = ''; ST = await DB.stickers();
     const a = document.createElement('button'); a.textContent = '+'; a.onclick = () => { sk = {}; skDraw(); $('#cap').value = ''; $('#zm').value = 1; sheet('s'); }; T.append(a);
+    if (isG(cur)) for (const h of (S.g[cur].sp || [])) { const x = GPS.has(h) && await DB.getSticker('gp_' + h); if (!x) continue; const im = new Image(); im.src = URL.createObjectURL(x.b); im.className = 'gp'; im.onclick = () => { sendMsg({ kind: 'st', b: x.b, mime: x.b.type }); T.classList.remove('on'); }; T.append(im); }
     ST.forEach(s => { const im = new Image(); im.src = URL.createObjectURL(s.b); let h;
       im.onclick = () => { sendMsg({ kind: 'st', b: s.b, mime: s.b.type }); T.classList.remove('on'); };
       const del = () => { if (confirm(t('delSt'))) DB.delSticker(s.id).then(trayDraw); };
@@ -1161,11 +1209,12 @@
   }
   function renderShf() {
     const B = $('#shfb'); B.innerHTML = '';
-    const box = (cls, pad) => { const d = document.createElement('div'); d.className = cls; if (pad) d.style.padding = pad; B.append(d); return d; }, mk = (cls, txt) => { const b = document.createElement('button'); b.className = cls; b.textContent = txt; return b; };
-    if (!shHas()) { box('empty').textContent = t('shfNoApp'); return; }
+    const box = (cls, pad) => { const d = document.createElement('div'); if (cls) d.className = cls; if (pad) d.style.padding = pad; B.append(d); return d; }, mk = (cls, txt) => { const b = document.createElement('button'); b.className = cls; b.textContent = txt; return b; };
+    const tail = () => { box('shh').textContent = t('shfFromChats'); renderDl(box('')); }; // photos, voice, files and call recordings from the chats
+    if (!shHas()) { tail(); return; }
     const pp = box('pp'), p1 = document.createElement('p'), p2 = document.createElement('p'); p1.textContent = t('shfInfo'); p2.textContent = NATIVE.shRoot() + '/'; p2.style.cssText = 'direction:ltr;text-align:start;font-family:monospace;font-size:12px;opacity:.75'; pp.append(p1, p2);
     const sl = box('sl', '6px 22px');
-    if (!NATIVE.shAccess()) { const g = mk('wb', t('shfGrant')); g.onclick = () => NATIVE.shRequest(); sl.append(g); return; }
+    if (!NATIVE.shAccess()) { const g = mk('wb', t('shfGrant')); g.onclick = () => NATIVE.shRequest(); sl.append(g); tail(); return; }
     NATIVE.shInit();
     const tg = mk('tg', (S.set.shf ? '✅ ' : '⬜ ') + t('shfAuto')); tg.onclick = () => { S.set.shf = S.set.shf ? 0 : 1; save(); renderShf(); };
     const sy = mk('wb', t('shfSync')); sy.onclick = () => shSync(sy); sl.append(tg, sy);
@@ -1173,8 +1222,35 @@
       const r = document.createElement('div'); r.className = 'dlr'; r.innerHTML = '<div class="th"><svg class="ic"><use href="#i-' + ic + '"/></svg></div><div class="mid"><b></b><span></span></div>';
       r.querySelector('b').textContent = t(lbl); r.querySelector('.mid span').textContent = shList(k).length + ' ' + t('shfFiles'); r.onclick = () => { shCat = k; showPage('shfc'); }; B.append(r);
     });
+    tail();
   }
   PG_ON.shf = renderShf;
+  // "Download": save a chat photo / voice / video file into Sh-Fill (non-media files and the web build keep the old Save-As dialog)
+  async function downloadMsg(m) {
+    const k = shHas() ? shCatOf(m) : null;
+    if (!k) return saveBlob(m);
+    if (!(await shEnsure())) return;
+    const r = await shEnq(() => shPut(k, shName(m, m.chat || cur), m.b));
+    toast(r === 'exists' ? t('shfExists') : r ? t('shfSaved') : '✗'); if (r && $('#pg-shf').classList.contains('on')) renderShf();
+  }
+  async function dlRec(rc) {
+    const b = await DB.get('rec:' + rc.id); if (!b) return;
+    if (!shHas()) return saveBlob({ b, name: rc.name, mime: rc.mime, kind: 'file' });
+    if (!(await shEnsure())) return;
+    const r = await shEnq(() => shPut('scr', rc.name, b)); toast(r === 'exists' ? t('shfExists') : r ? t('shfSaved') : '✗'); if (r && $('#pg-shf').classList.contains('on')) renderShf();
+  }
+  // one voice message / video at a time: starting another one stops the previous (also when the list was redrawn meanwhile)
+  document.addEventListener('play', e => {
+    const a = e.target; if (!a || !a.closest || !a.closest('#ms, #shv')) return;
+    if (VP.el && VP.el !== a) { try { VP.el.pause(); } catch (x) {} }
+    VP.el = a; VP.mid = a.dataset ? a.dataset.mid || null : null;
+  }, true);
+  // keep the newest message in view when the keyboard opens or the composer grows (the window shrinks but the list is not re-anchored)
+  const msEl = $('#ms'); let msEnd = true;
+  msEl.addEventListener('scroll', () => { msEnd = msEl.scrollHeight - msEl.scrollTop - msEl.clientHeight < 120; }, { passive: true });
+  if (window.ResizeObserver) new ResizeObserver(() => { if (msEnd && cur) msEl.scrollTop = msEl.scrollHeight; }).observe(msEl);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && cur) clearNotif(cur); });
+
   function renderCat() {
     const k = shCat, L = $('#shfl'); L.innerHTML = ''; $('#shfct').textContent = t(SH_CATS.find(c => c[0] === k)[1]);
     const files = shHas() && NATIVE.shAccess() ? shList(k) : [];

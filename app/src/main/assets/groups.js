@@ -7,7 +7,7 @@
   const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
   const okImg = (v, max) => v === '' || (typeof v === 'string' && v.length <= max && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(v));
   const okAv = v => okImg(v, 40000);
-  const HASH = /^[a-f0-9]{32}$/, FC = /^#[0-9a-fA-F]{6}$/;
+  const HASH = /^[a-f0-9]{32}$/, FC = /^#[0-9a-fA-F]{6}$/, SP_MAX = 30; // SP_MAX: stickers in a group's own pack
 
   function can(g, k, p) {
     if (!g || !g.mem || !g.mem[k]) return false;
@@ -22,7 +22,7 @@
   // fixed field order => stable JSON
   function canon(s) {
     const o = { id: s.id, ver: s.ver, owner: s.owner, opk: s.opk, name: s.name, mem: s.mem, roles: s.roles || {}, titles: s.titles || {}, pd: s.pd || clone(MEMBER_DEFAULT), pm: s.pm || {} };
-    if (s.av) o.av = s.av; if (s.fc) o.fc = s.fc; if (s.ds) o.ds = s.ds; if (s.cvh) o.cvh = s.cvh; if (s.gfh) o.gfh = s.gfh; return o;
+    if (s.av) o.av = s.av; if (s.fc) o.fc = s.fc; if (s.ds) o.ds = s.ds; if (s.cvh) o.cvh = s.cvh; if (s.gfh) o.gfh = s.gfh; if (s.sp && s.sp.length) o.sp = s.sp; return o;
   }
   function validState(s) {
     try {
@@ -39,7 +39,8 @@
       for (const [k, o] of Object.entries(s.pm || {})) if (mem[k] && k !== s.owner && o && typeof o === 'object') { const x = {}; for (const p of PERMS) if (p in o) x[p] = o[p] ? 1 : 0; if (Object.keys(x).length) pm[k] = x; }
       if (s.av !== undefined && !okAv(s.av)) return null;
       if (s.fc !== undefined && !FC.test(s.fc)) return null; if (s.cvh !== undefined && !HASH.test(s.cvh)) return null; if (s.gfh !== undefined && !HASH.test(s.gfh)) return null;
-      const out = { id: s.id, ver: s.ver, owner: s.owner, opk: s.opk, name, mem, roles, titles, pd, pm }; if (s.av) out.av = s.av; if (s.fc) out.fc = s.fc; const ds = clean(s.ds, 300); if (ds) out.ds = ds; if (s.cvh) out.cvh = s.cvh; if (s.gfh) out.gfh = s.gfh; return out;
+      if (s.sp !== undefined && (!Array.isArray(s.sp) || s.sp.length > SP_MAX || !s.sp.every(h => HASH.test(h)) || new Set(s.sp).size !== s.sp.length)) return null;
+      const out = { id: s.id, ver: s.ver, owner: s.owner, opk: s.opk, name, mem, roles, titles, pd, pm }; if (s.av) out.av = s.av; if (s.fc) out.fc = s.fc; const ds = clean(s.ds, 300); if (ds) out.ds = ds; if (s.cvh) out.cvh = s.cvh; if (s.gfh) out.gfh = s.gfh; if (s.sp && s.sp.length) out.sp = s.sp.slice(); return out;
     } catch (e) { return null; }
   }
   const strip = (n, k) => { delete n.mem[k]; delete n.roles[k]; delete n.titles[k]; delete n.pm[k]; };
@@ -55,6 +56,8 @@
       case 'ds': { if (!can(g, from, 'info')) return null; const v = clean(op.v, 300); if (v) n.ds = v; else delete n.ds; break; }
       case 'fc': { if (!can(g, from, 'info') || (op.v !== '' && !FC.test(op.v))) return null; if (op.v) n.fc = op.v; else delete n.fc; break; }
       case 'cv': case 'gf': { const f = op.a === 'cv' ? 'cvh' : 'gfh'; if (!can(g, from, 'info') || (op.h !== '' && !HASH.test(op.h))) return null; if (op.h) n[f] = op.h; else delete n[f]; break; }
+      case 'sa': { if (!can(g, from, 'info') || !HASH.test(op.h) || (n.sp || []).includes(op.h) || (n.sp || []).length >= SP_MAX) return null; n.sp = (n.sp || []).concat(op.h); break; }
+      case 'sr': { if (!can(g, from, 'info') || !(n.sp || []).includes(op.h)) return null; n.sp = n.sp.filter(x => x !== op.h); if (!n.sp.length) delete n.sp; break; }
       case 'leave': { if (isO) return null; strip(n, from); break; }
       case 'rm': { if (!isO || !n.mem[op.k] || op.k === g.owner) return null; strip(n, op.k); break; }
       case 'role': { if (!isO || !n.mem[op.k] || op.k === g.owner) return null; if (op.v === 'a') n.roles[op.k] = 'a'; else delete n.roles[op.k]; break; }
@@ -68,5 +71,5 @@
     }
     return n;
   }
-  G.ShilaGroups = { can, role, canon, validState, applyOp, PERMS, MEMBER_DEFAULT, okAv, okImg, HASH };
+  G.ShilaGroups = { can, role, canon, validState, applyOp, SP_MAX, PERMS, MEMBER_DEFAULT, okAv, okImg, HASH };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
