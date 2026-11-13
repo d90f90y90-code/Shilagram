@@ -13,7 +13,7 @@
   // ---------- state ----------
   await DB.init();
   let ME = await DB.get('me'), ID = await DB.get('identity'), S = (await DB.get('state')) || { c: {}, g: {}, ice: '', lang: '' };
-  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
+  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14, notyp: 0, autoUpd: 1 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
   I18N.set(S.lang || I18N.detect());
   if (!ME) {
     const mig = await DB.migrateLegacy();
@@ -26,12 +26,13 @@
   }
   if (!ID) { ID = await C.newIdentity(); await DB.set('identity', ID); }
   ID.pub = U8(ID.pub);
-  let PIN = await DB.get('pin');
+  let PIN = await DB.get('pin'), TSV = await DB.get('tsv'), TL = (await DB.get('tsvl')) || { f: 0, u: 0 };
+  const F = ShilaFeatures; S.exp = S.exp || {}; S.cq = S.cq || {};
   let _st; const save = () => { clearTimeout(_st); _st = setTimeout(() => DB.set('state', S), 250); };
   document.addEventListener('visibilitychange', () => { if (document.hidden) { DB.set('state', S); window.__hiddenAt = Date.now(); } else { if (PIN && window.__hiddenAt && S.set.lockAfter >= 0 && Date.now() - window.__hiddenAt >= S.set.lockAfter * 1000) unlockLoop(); poll(); if (peer && peer.disconnected) try { peer.reconnect(); } catch (e) {} } });
   save();
 
-  let rot = {}, seen = {}, act = {}, bootT = Date.now(), M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null;
+  let rot = {}, seen = {}, act = {}, bootT = Date.now(), M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null, tsvRes = null, pwRes = null, fwMsg = null, pinCur = 0, typSent = {}, typing = {}, updInfo = null;
   const ch = id => S.c[id] || S.g[id], isG = id => !!S.g[id], on = k => !!(conns[k] && conns[k].auth);
   const members = id => isG(id) ? Object.keys(S.g[id].mem).filter(k => k !== ME.key) : [id];
   const nmOf = (id, f) => f === ME.key ? ME.name : (S.c[f] && S.c[f].name) || (S.g[id] && S.g[id].mem[f]) || f;
@@ -71,19 +72,35 @@
   }
   function sealTo(c, h, bin) { return C.seal(c.aes, h, bin).then(f => { try { c.send(f); return true; } catch (e) { return false; } }); }
   async function sendMsgTo(c, id, m) {
-    const h = { t: 'm', i: m.mid, ts: m.ts, kind: m.kind, x: m.x, mime: m.mime, name: m.name, dur: m.dur, r: m.r };
+    const h = { t: 'm', i: m.mid, ts: m.ts, kind: m.kind, x: m.x, mime: m.mime, name: m.name, dur: m.dur, r: m.r, fw: m.fw, ex: m.ttl };
     if (isG(id)) h.g = id;
     const ok = await sealTo(c, h, m.b ? await m.b.arrayBuffer() : null);
     if (ok && !m.sent) { m.sent = 1; DB.putMsg(m); }
   }
   async function flushMsg(id, m) { for (const k of m.p.slice()) { if (on(k)) await sendMsgTo(conns[k], id, m); else connect(k); } }
-  async function sendMsg(o) {
-    if (!cur) return; const id = cur, mid = rid(12);
+  async function sendMsg(o, target, fwd) {
+    const id = target || cur; if (!id) return; const mid = rid(12);
     if (isG(id) && (S.g[id].left || !SG.can(S.g[id], ME.key, o.kind === 't' ? 'send' : 'media'))) return alert(t('noPerm'));
     const m = Object.assign({ id: mid + ':' + id, mid, chat: id, f: ME.key, me: 1, ts: Date.now(), p: members(id), pend: 1 }, o);
-    if (replyTo) { m.r = replyTo.mid; clearReply(); }
-    if (!m.p.length) delete m.pend;
+    if (!fwd && id === cur && replyTo) { m.r = replyTo.mid; clearReply(); }
+    const ttl = F.validTtl(ch(id).ttl); if (ttl) m.ttl = ttl;
+    if (!m.p.length) { delete m.pend; if (m.ttl) S.exp[m.id] = F.expiresAt(m.ttl, Date.now()); }
     await addMsg(id, m); flushMsg(id, m);
+  }
+  // like sendCtl, but a peer that is offline gets it when it reconnects (reactions, pins)
+  function sendCtlQ(id, h) {
+    if (isG(id)) h.g = id;
+    for (const k of members(id)) { const q = () => { F.ctlEnqueue(S.cq, k, h, Date.now()); save(); }; if (on(k)) sealTo(conns[k], h).then(ok => { if (!ok) q(); }); else q(); }
+  }
+  const canPin = (id, k) => !isG(id) || !S.g[id].owner || SG.can(S.g[id], k, 'info');
+  async function sweep() { // self-destructing messages: delete what expired (also while the chat is closed)
+    if (sweep.busy) return; const ids = F.dueIds(S.exp, Date.now()); if (!ids.length) return; sweep.busy = 1;
+    try {
+      const chats = new Set();
+      for (const id of ids) { delete S.exp[id]; const m = await DB.getMsg(id); if (!m) continue; await DB.delMsg(id); chats.add(m.chat); if (M[m.chat]) M[m.chat] = M[m.chat].filter(x => x.id !== id); }
+      for (const c of chats) await refreshMeta(c);
+      save(); if (cur && chats.has(cur)) { draw(); drawPin(); } list();
+    } finally { sweep.busy = 0; }
   }
   async function sendCtl(id, h) { for (const k of members(id)) if (on(k)) { if (isG(id)) h.g = id; sealTo(conns[k], h); } }
   const getM = (id, mid) => (M[id] || []).find(m => m.mid === mid);
@@ -158,6 +175,7 @@
       if (g.owner === k && g.pend && g.pend.length) { const ops = g.pend; g.pend = []; save(); for (const op of ops) await sealTo(c, { t: 'gop', g: id, op }); }
     }
     for (const m of await DB.pendingMsgs()) if (m.p.includes(k) && (m.chat === k || (S.g[m.chat] && S.g[m.chat].mem[k]))) await sendMsgTo(c, m.chat, m);
+    for (const h of F.ctlTake(S.cq, k, Date.now())) await sealTo(c, h);
     wantAssets(); list(); if (cur) drawHead();
   }
   async function handlePlain(c, h, bin) {
@@ -165,7 +183,7 @@
     if (h.t === 'fr') return receiveRequest(c, h);
     if (h.t === 'fa') return receiveAccept(c);
     if (h.t === 'fd') return receiveDecline(k);
-    if (!S.c[k] && !['gs', 'gop', 'm', 'a', 'd', 'ed', 'gci', 'gcj', 'gar', 'gad', 'shr'].includes(h.t)) return; // non-friends may only take part in shared groups
+    if (!S.c[k] && !['gs', 'gop', 'm', 'a', 'd', 'ed', 'gci', 'gcj', 'gar', 'gad', 'shr', 'rx', 'pin', 'typ'].includes(h.t)) return; // non-friends may only take part in shared groups
     if (h.t === 'gs') await receiveState(c, h);
     else if (h.t === 'gop') {
       const g = S.g[h.g]; if (!g || g.owner !== ME.key || !h.op) return; const op = Object.assign({}, h.op); delete op.d;
@@ -184,6 +202,20 @@
     else if (h.t === 'gcj') { const g = S.g[h.g]; if (call && call.group === h.g && g && g.mem[k] && !call.parts[k]) callPart(k); }
     else if (h.t === 'shr') { if (h.on && call && (call.k === k || (call.group && S.g[call.group] && S.g[call.group].mem[k]))) flashNotice(nmOf(call.group || k, k) + ' ' + t('sharingNow'), 3500); }
     else if (h.t === 'pf') receiveProfile(k, h);
+    else if (h.t === 'typ') {
+      const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k])) return;
+      F.typingMark(typing[id] || (typing[id] = {}), k, Date.now()); list(); if (cur === id) drawHead();
+      setTimeout(() => { list(); if (cur === id) drawHead(); }, F.TYPING_MS + 100);
+    }
+    else if (h.t === 'rx') {
+      const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k])) return;
+      const m = await DB.getMsg(String(h.i).slice(0, 20) + ':' + id); if (!m || m.del) return;
+      m.rx = F.applyReaction(m.rx, k, h.e); await DB.putMsg(m); const mm = getM(id, m.mid); if (mm) mm.rx = m.rx; if (cur === id) draw();
+    }
+    else if (h.t === 'pin') {
+      const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k]) || !canPin(id, k)) return;
+      const mid = String(h.i).slice(0, 20); o.pins = h.on ? F.pinAdd(o.pins, mid) : F.pinRemove(o.pins, mid); save(); if (cur === id) drawPin();
+    }
     else if (h.t === 'rec') { if (h.on && call && call.k === k) showRecNotice(); else if (!h.on) $('#recn').classList.remove('on'); }
     else if (h.t === 'm') {
       const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k])) return;
@@ -202,6 +234,9 @@
           m.mime = mime; m.b = new Blob([bin], { type: mime }); if (h.dur) m.dur = Number(h.dur) || 0;
         }
         if (h.r) m.r = String(h.r).slice(0, 20);
+        if (h.fw) m.fw = F.fwName(h.fw);
+        const ttl = F.validTtl(h.ex); if (ttl) { m.ttl = ttl; S.exp[rid_] = F.expiresAt(ttl, Date.now()); save(); }
+        if (typing[id]) delete typing[id][k];
         if (cur !== id) o.u = (o.u || 0) + 1;
         await addMsg(id, m);
         shAuto(m, id);
@@ -210,7 +245,7 @@
       sealTo(c, { t: 'a', i: mid, g: h.g });
     } else if (h.t === 'a') {
       const id = h.g || k, m = await DB.getMsg(String(h.i) + ':' + id);
-      if (m && m.p) { m.p = m.p.filter(x => x !== k); if (!m.p.length) delete m.pend; await DB.putMsg(m); const mm = getM(id, m.mid); if (mm) { mm.p = m.p; mm.pend = m.pend; } if (cur === id) draw(); }
+      if (m && m.p) { m.p = m.p.filter(x => x !== k); if (!m.p.length) { delete m.pend; if (m.ttl && !S.exp[m.id]) { S.exp[m.id] = F.expiresAt(m.ttl, Date.now()); save(); } } await DB.putMsg(m); const mm = getM(id, m.mid); if (mm) { mm.p = m.p; mm.pend = m.pend; } if (cur === id) draw(); }
     } else if (h.t === 'd' || h.t === 'ed') {
       const id = h.g || k, m = await DB.getMsg(String(h.i) + ':' + id);
       if (!m || m.f !== k) return;
@@ -244,6 +279,7 @@
     if (peer && !peer.disconnected) { poll(); checkRotation(); }
   }, 20000);
   setInterval(() => ensureDir(), 8000);
+  setInterval(sweep, 1000);
 
   // ---------- list & chat UI ----------
   function list() {
@@ -256,7 +292,7 @@
       r.innerHTML = '<div class="av' + (!g && on(id) ? ' on' : '') + '"></div><div class="mid"><b></b><span></span></div><div class="meta"><div></div></div>';
       avStyle(r.children[0], o.av, g ? '👥' : (o.name || '?')[0]); r.querySelector('b').textContent = o.name;
       const pv = o.lk === 'st' ? t('sticker') : o.lk === 'img' ? t('photo') : o.lk === 'vo' ? t('voice') : (o.lx || '');
-      r.querySelector('span').textContent = pv || (g ? Object.keys(o.mem).length + t('members') : on(id) ? t('online') : t('offline'));
+      const tkl = F.typingNow(typing[id], Date.now()); r.querySelector('span').textContent = tkl.length ? t('typing') : pv || (g ? Object.keys(o.mem).length + t('members') : on(id) ? t('online') : t('offline'));
       r.querySelector('.meta div').textContent = o.last ? tm(o.last) : '';
       if (o.u) { const b = document.createElement('span'); b.className = 'bd'; b.textContent = o.u; r.lastChild.append(b); }
       r.onclick = () => open(id); L.append(r);
@@ -265,13 +301,31 @@
   async function open(id) {
     cur = id; ch(id).u = 0; save(); M[id] = await DB.chatMsgs(id); clearReply();
     $('#chat').classList.add('on'); $('#tray').classList.remove('on'); $('#bc1').style.display = $('#bc2').style.display = '';
-    drawHead(); updateComposer(); draw(1); list(); showRot();
+    drawHead(); updateComposer(); pinCur = 0; draw(1); drawPin(); list(); showRot();
   }
   function back() { cur = null; $('#rotb').hidden = true; $('#chat').classList.remove('on'); list(); }
   function drawHead() {
     const o = ch(cur); if (!o) return;
     $('#cn').textContent = o.name; avStyle($('#ca'), o.av, isG(cur) ? '👥' : (o.name || '?')[0]);
-    $('#cs').textContent = isG(cur) ? Object.keys(o.mem).map(k => nmOf(cur, k)).join('، ') : on(cur) ? t('online') + ' · ' + t('secure') : t('offline');
+    const tk = F.typingNow(typing[cur], Date.now());
+    $('#cs').textContent = tk.length ? (isG(cur) ? tk.map(k => nmOf(cur, k)).join('، ') + ' ' + (tk.length > 1 ? t('typingMany') : t('typing')) : t('typing')) : isG(cur) ? Object.keys(o.mem).map(k => nmOf(cur, k)).join('، ') : on(cur) ? t('online') + ' · ' + t('secure') : t('offline');
+  }
+  function drawPin() {
+    const o = ch(cur), b = $('#pinb'); if (!o) { b.hidden = true; return; }
+    const ids = F.pinPrune(o.pins, x => { const m = getM(cur, x); return m && !m.del; });
+    if (!ids.length) { b.hidden = true; pinCur = 0; return; }
+    pinCur = pinCur % ids.length; const m = getM(cur, ids[ids.length - 1 - pinCur]);
+    $('#pint').textContent = t('pinnedMsg') + (ids.length > 1 ? ' (' + (pinCur + 1) + '/' + ids.length + ')' : '') + ': ' + pvText(m);
+    $('#pinx').style.display = canPin(cur, ME.key) ? '' : 'none'; b.hidden = false; b.dataset.mid = m.mid;
+  }
+  $('#pinb').onclick = e => { if (e.target.id === 'pinx') return; const mid = $('#pinb').dataset.mid; if (mid) { jumpTo(mid); pinCur++; setTimeout(drawPin, 400); } };
+  $('#pinx').onclick = () => { const mid = $('#pinb').dataset.mid; if (mid) togglePin(getM(cur, mid)); };
+  function togglePin(m) {
+    if (!m || !canPin(cur, ME.key)) return toast(t('pinNoPerm')); const o = ch(cur), on_ = !(o.pins || []).includes(m.mid);
+    o.pins = on_ ? F.pinAdd(o.pins, m.mid) : F.pinRemove(o.pins, m.mid); save(); pinCur = 0; drawPin(); draw(); sendCtlQ(cur, { t: 'pin', i: m.mid, on: on_ ? 1 : 0 });
+  }
+  async function react(m, e) {
+    const ne = (m.rx || {})[ME.key] === e ? '' : e; m.rx = F.applyReaction(m.rx, ME.key, ne); await DB.putMsg(m); draw(); sendCtlQ(cur, { t: 'rx', i: m.mid, e: ne });
   }
   function draw(stick) {
     const o = ch(cur); if (!o) return; urls.forEach(u => URL.revokeObjectURL(u)); urls = [];
@@ -280,6 +334,7 @@
     (M[cur] || []).slice(-150).forEach(m => {
       const b = document.createElement('div'); b.className = 'b' + (m.me ? ' me' : '') + (m.kind === 'st' && !m.del ? ' st' : '') + (m.del ? ' del' : ''); b.dataset.mid = m.mid;
       if (isG(cur) && !m.me) { const n = document.createElement('b'); n.textContent = nmOf(cur, m.f) + (gTitle(cur, m.f) ? ' · ' + gTitle(cur, m.f) : ''); b.append(n); }
+      if (m.fw && !m.del) { const f = document.createElement('span'); f.className = 'fw'; f.textContent = t('fwFrom') + m.fw; b.append(f); }
       if (m.r && !m.del) { const q = getM(cur, m.r); const rp = document.createElement('div'); rp.className = 'rp'; rp.textContent = q ? pvText(q) : '…'; b.append(rp); }
       if (m.del) { const s = document.createElement('span'); s.textContent = t('deleted'); b.append(s); }
       else if (m.kind === 'st' && m.b) { const im = document.createElement('img'); im.className = 'st'; im.src = url(m.b); if (!m.me) im.onclick = () => { if (confirm(t('saveSt'))) saveSticker(m.b); }; b.append(im); }
@@ -288,7 +343,8 @@
       else if (m.kind === 'file' && m.b) { const f = document.createElement('div'); f.className = 'fl'; f.innerHTML = '<span>📎</span><u></u>'; f.lastChild.textContent = (m.name || 'file') + ' (' + Math.ceil(m.b.size / 1024) + ' KB)'; f.onclick = () => saveBlob(m); b.append(f); }
       else if (m.kind !== 't' && !m.b) { const s = document.createElement('span'); s.textContent = t('mediaGone'); s.style.opacity = '.6'; b.append(s); }
       else { const s = document.createElement('span'); s.textContent = m.x || ''; b.append(s); }
-      const i = document.createElement('i'); i.textContent = (m.ed ? t('edited') + ' · ' : '') + tm(m.ts) + (m.me ? (m.p && !m.p.length ? ' ✓✓' : m.sent ? ' ✓' : ' ⏱') : ''); b.append(i);
+      if (!m.del && m.rx && Object.keys(m.rx).length) { const rr = document.createElement('div'); rr.className = 'rxs'; F.reactionSummary(m.rx, ME.key).forEach(c => { const bt = document.createElement('button'); bt.textContent = c.e + (c.n > 1 ? ' ' + c.n : ''); bt.classList.toggle('mine', c.mine); bt.onclick = ev => { ev.stopPropagation(); react(m, c.e); }; rr.append(bt); }); b.append(rr); }
+      const i = document.createElement('i'); i.textContent = (m.ttl ? '⏳ ' : '') + ((ch(cur).pins || []).includes(m.mid) ? '📌 ' : '') + (m.ed ? t('edited') + ' · ' : '') + tm(m.ts) + (m.me ? (m.p && !m.p.length ? ' ✓✓' : m.sent ? ' ✓' : ' ⏱') : ''); b.append(i);
       let h; const act = () => showActions(m);
       b.oncontextmenu = e => { e.preventDefault(); act(); };
       b.ontouchstart = () => { h = setTimeout(act, 600); }; b.ontouchend = b.ontouchmove = b.ontouchcancel = () => clearTimeout(h);
@@ -306,7 +362,10 @@
   function showActions(m) {
     const L = $('#actl'); L.innerHTML = '';
     const add = (label, fn, cls) => { const b = document.createElement('button'); b.textContent = label; b.onclick = () => { sheet(0); fn(); }; L.append(b); };
+    if (!m.del) { const rw = document.createElement('div'); rw.className = 'rxrow'; F.REACTIONS.forEach(e => { const b = document.createElement('button'); b.textContent = e; b.onclick = () => { sheet(0); react(m, e); }; rw.append(b); }); L.append(rw); }
     if (!m.del) add(t('reply'), () => setReply(m));
+    if (!m.del && (m.x || m.b)) add('↪ ' + t('forward'), () => openForward(m));
+    if (!m.del && canPin(cur, ME.key)) add('📌 ' + ((ch(cur).pins || []).includes(m.mid) ? t('unpin') : t('pin')), () => togglePin(m));
     if (!m.del && m.kind === 't' && m.x) add(t('copy'), () => copyText(m.x));
     if (!m.del && m.me && m.kind === 't') add(t('edit'), async () => {
       const x = (dialog(t('edit'), m.x) || '').trim(); if (!x || x === m.x) return;
@@ -324,7 +383,7 @@
   $('#rx').onclick = clearReply;
 
   // ---------- sheets ----------
-  function sheet(n) { if (n !== 'inc') pendingGroup = null; $('#x').style.display = n === 'un' ? 'none' : ''; $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
+  function sheet(n) { if (n !== 'tsv' && tsvRes) { const r = tsvRes; tsvRes = null; r(null); } if (n !== 'inc') pendingGroup = null; $('#x').style.display = n === 'un' ? 'none' : ''; $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
   const closeSheet = () => { if (userPending()) return; sheet(0); };
   window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if ($('#shv').classList.contains('on')) { vClose(); return 1; } if ($('#call').classList.contains('on') && !$('#call').classList.contains('min')) { minimizeCall(); return 1; } if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
   $('#x').onclick = closeSheet; $('#sh').onclick = e => { if (e.target.id === 'sh') closeSheet(); };
@@ -515,6 +574,7 @@
 
   // backup
   $('#bex').onclick = async () => {
+    if (!(await checkTsv(t('tsvCurrent')))) return;
     const pass = dialog(t('passAsk')); if (!pass) return;
     const msgs = []; for (const m of await DB.allMsgs()) { const c = Object.assign({}, m); if (m.b) { c.bdata = await blobB64(m.b); c.bmime = m.b.type; delete c.b; } msgs.push(c); }
     const st = []; for (const s of await DB.allStickers()) st.push({ id: s.id, ts: s.ts, d: await blobB64(s.b), mime: s.b.type });
@@ -777,6 +837,7 @@
     add(isG(cur) ? 'ℹ️ ' + t('groupInfo') : '🔐 ' + t('contactInfo'), () => isG(cur) ? openGroupInfo() : openContactInfo());
     if (!isG(cur)) add('⛔ ' + t('block'), () => { if (!confirm(t('confirmBlock'))) return; S.block[cur] = 1; try { conns[cur] && conns[cur].close(); } catch (e) {} save(); toast(t('cleared')); });
     add('🗑 ' + t('delChat'), async () => { if (!confirm(t('delChat'))) return; await DB.delChat(cur); delete S.c[cur]; delete S.g[cur]; delete M[cur]; save(); back(); });
+    add('⏳ ' + t('ttlTitle') + ' · ' + ttlLabel(ch(cur).ttl), () => openTtl());
     add(t('cancelAct'), () => {}); sheet('act');
   };
   function openContactInfo() { openProfileView(cur); }
@@ -785,7 +846,34 @@
   // composer
   $('#t').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && S.set.enter) { e.preventDefault(); $('#bs').click(); } });
   $('#bs').onclick = () => { const x = $('#t').value.trim(); if (!x) return; sendMsg({ kind: 't', x }); $('#t').value = ''; $('#t').style.height = ''; };
-  $('#t').oninput = e => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; };
+  $('#t').oninput = e => {
+    e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px';
+    if (S.set.notyp || !cur || !e.target.value.trim()) return; const now = Date.now();
+    if (F.shouldSendTyping(typSent[cur], now)) { typSent[cur] = now; sendCtl(cur, { t: 'typ' }); }
+  };
+  // ---------- self-destruct timer, forwarding ----------
+  const TTLK = { 0: 'ttlOff', 10: 'ttl10', 60: 'ttl60', 3600: 'ttl1h', 86400: 'ttl1d', 604800: 'ttl7d' };
+  const ttlLabel = v => t(TTLK[F.validTtl(v)] || 'ttlOff');
+  function openTtl() {
+    const L = $('#ttll'); L.innerHTML = '';
+    F.TTLS.forEach(v => { const b = document.createElement('button'); b.textContent = (F.validTtl(ch(cur).ttl) === v ? '✅ ' : '') + ttlLabel(v); b.onclick = () => { ch(cur).ttl = v; save(); sheet(0); toast(v ? t('ttlSetTo') + ttlLabel(v) : t('ttlOffToast')); }; L.append(b); });
+    sheet('ttl');
+  }
+  function openForward(m) {
+    const L = $('#fwl'); L.innerHTML = ''; fwMsg = m;
+    [...Object.entries(S.c), ...Object.entries(S.g).filter(([, g]) => !g.left)].forEach(([id, o]) => { const d = document.createElement('label'); d.className = 'chk'; d.innerHTML = '<input type="checkbox"><span></span>'; d.firstChild.value = id; d.lastChild.textContent = (isG(id) ? '👥 ' : '') + o.name; L.append(d); });
+    sheet('fw');
+  }
+  $('#fwok').onclick = async () => {
+    const ids = [...$$('#fwl input:checked')].map(i => i.value); if (!ids.length) return toast(t('fwNone'));
+    const m = fwMsg; if (!m) return; sheet(0);
+    for (const id of ids) {
+      const o = { kind: m.kind, fw: F.fwName(m.fw || (m.me ? ME.name : nmOf(m.chat, m.f))) };
+      if (m.kind === 't') o.x = m.x; else { if (!m.b) continue; o.b = m.b; o.mime = m.mime; if (m.name) o.name = m.name; if (m.dur) o.dur = m.dur; }
+      await sendMsg(o, id, true);
+    }
+    toast(t('fwDone'));
+  };
   $('#ba').onclick = () => sheet('att');
   $('#aimg').onclick = () => $('#fimg').click(); $('#afil').onclick = () => $('#ffil').click();
   async function shrink(file, max = 1280) {
@@ -1167,8 +1255,48 @@
   const padDraw = () => { const d = $('#lkd'); if (d.children.length !== 4) d.innerHTML = '<i></i><i></i><i></i><i></i>'; [...d.children].forEach((e, i) => e.classList.toggle('f', i < padBuf.length)); };
   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'].forEach(k => { const b = document.createElement('button'); b.textContent = k; if (!k) b.style.visibility = 'hidden'; b.onclick = () => padKey(k); $('#lkp').append(b); });
   function padKey(k) { if (!padRes) return; if (k === '⌫') padBuf = padBuf.slice(0, -1); else if (padBuf.length < 4) padBuf += k; padDraw(); if (padBuf.length === 4) { const v = padBuf, r = padRes; padBuf = ''; padRes = null; setTimeout(padDraw, 120); r(v); } }
-  function askPin(title, cancel, err) { return new Promise(res => { $('#lkt').textContent = title; $('#lke').textContent = err || ''; padBuf = ''; padDraw(); $('#lkc').hidden = !cancel; $('#lkav').style.display = cancel ? 'none' : ''; avStyle($('#lkav'), ME.av, (ME.name || '?')[0]); padRes = res; $('#lock').classList.add('on'); $('#lkc').onclick = () => { padRes = null; res(null); }; }); }
-  const hidePad = () => { padRes = null; $('#lock').classList.remove('on'); };
+  function askPin(title, cancel, err) { return new Promise(res => { $('#lkp').style.display = $('#lkd').style.display = ''; $('#lkw').hidden = true; $('#lkt').textContent = title; $('#lke').textContent = err || ''; padBuf = ''; padDraw(); $('#lkc').hidden = !cancel; $('#lkav').style.display = cancel ? 'none' : ''; avStyle($('#lkav'), ME.av, (ME.name || '?')[0]); padRes = res; $('#lock').classList.add('on'); $('#lkc').onclick = () => { padRes = null; res(null); }; }); }
+  const hidePad = () => { padRes = null; pwRes = null; $('#lock').classList.remove('on'); $('#lkp').style.display = $('#lkd').style.display = ''; $('#lkw').hidden = true; };
+  // ---------- two-step verification: second step (password) after the PIN ----------
+  function askPassword(title, o) {
+    o = o || {};
+    return new Promise(res => {
+      $('#lkt').textContent = title; $('#lke').textContent = o.err || ''; $('#lkh').textContent = o.hint ? t('tsvHintShow') + o.hint : '';
+      $('#lkp').style.display = $('#lkd').style.display = 'none'; $('#lkw').hidden = false; $('#lkf').hidden = !o.forgot; $('#lkpw').value = '';
+      $('#lkc').hidden = !o.cancel; $('#lkav').style.display = o.cancel ? 'none' : ''; avStyle($('#lkav'), ME.av, (ME.name || '?')[0]);
+      pwRes = res; $('#lock').classList.add('on'); setTimeout(() => $('#lkpw').focus(), 60);
+      $('#lkc').onclick = () => { pwRes = null; res(null); };
+    });
+  }
+  $('#lkpb').onclick = () => { if (!pwRes) return; const v = $('#lkpw').value, r = pwRes; pwRes = null; $('#lkpw').value = ''; r(v); };
+  $('#lkpw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#lkpb').click(); });
+  $('#lkf').onclick = async () => { if (!confirm(t('tsvForgotConfirm'))) return; await DB.wipe(); try { localStorage.clear(); } catch (e) {} location.reload(); };
+  async function tsvLoop() { // wrong guesses are counted on disk: restarting the app does not reset the delay
+    let msg = '';
+    for (;;) {
+      if (Date.now() < TL.u) { msg = t('pinTooMany'); await new Promise(r => setTimeout(r, TL.u - Date.now())); }
+      const v = await askPassword(t('tsvEnter'), { hint: TL.f >= 2 ? TSV.hint : '', err: msg, forgot: true });
+      if (v !== null && (await C.pinHash(v, TSV.s)) === TSV.h) { TL = { f: 0, u: 0 }; DB.set('tsvl', TL); return; }
+      msg = t('tsvWrong'); TL.f++; if (TL.f % 3 === 0) TL.u = Date.now() + Math.min(600, 30 * (TL.f / 3)) * 1000; DB.set('tsvl', TL);
+    }
+  }
+  async function checkTsv(title) {
+    if (!TSV) return true; const v = await askPassword(title, { cancel: 1, hint: TSV.hint }); if (v === null) { hidePad(); return false; }
+    const ok = (await C.pinHash(v, TSV.s)) === TSV.h; hidePad(); if (!ok) toast(t('tsvWrong')); return ok;
+  }
+  function tsvSheet(title) {
+    return new Promise(res => {
+      $('#tsvt').textContent = title; $('#tsv1').placeholder = t('tsvPw'); $('#tsv2').placeholder = t('tsvPwConfirm'); $('#tsvh').placeholder = t('tsvHint');
+      ['#tsv1', '#tsv2', '#tsvh'].forEach(x => $(x).value = ''); $('#tsve').textContent = ''; sheet('tsv'); tsvRes = res;
+    });
+  }
+  $('#tsvok').onclick = () => {
+    const a = $('#tsv1').value, b = $('#tsv2').value, hn = $('#tsvh').value.trim().slice(0, 60);
+    if (!F.tsvStrongEnough(a)) return ($('#tsve').textContent = t('tsvShort')); if (a !== b) return ($('#tsve').textContent = t('tsvMismatch'));
+    if (hn && hn.toLowerCase().includes(a.toLowerCase())) return ($('#tsve').textContent = t('tsvHint'));
+    const r = tsvRes; tsvRes = null; sheet(0); if (r) r({ pw: a, hint: hn });
+  };
+  async function saveTsv(r) { const s = C.b64(C.rnd(16)); TSV = { s, h: await C.pinHash(r.pw, s), hint: r.hint }; TL = { f: 0, u: 0 }; await DB.set('tsv', TSV); await DB.set('tsvl', TL); }
   async function unlockLoop() {
     if (!PIN || lockedNow) return; lockedNow = true; let msg = '';
     for (;;) {
@@ -1176,7 +1304,7 @@
       const v = await askPin(t('lockTitle'), false, msg); if (v !== null && (await C.pinHash(v, PIN.s)) === PIN.h) break;
       msg = t('pinWrong'); if (++fails >= 5) { waitUntil = Date.now() + 30000; fails = 0; }
     }
-    hidePad(); lockedNow = false; fails = 0;
+    if (TSV) await tsvLoop(); hidePad(); lockedNow = false; fails = 0;
   }
   async function checkPin(title) { const v = await askPin(title, true); if (v === null) { hidePad(); return false; } const ok = (await C.pinHash(v, PIN.s)) === PIN.h; if (!ok) { hidePad(); toast(t('pinWrong')); } return ok; }
   async function setPin() {
@@ -1203,12 +1331,20 @@
   $('#nsys').onclick = () => NATIVE && NATIVE.notifSettings && NATIVE.notifSettings();
   PG_ON.priv = () => {
     const L = $('#prl'); L.innerHTML = '';
-    tgl(L, t('appLock'), !!PIN, async () => { if (PIN) { if (await checkPin(t('pinCurrent'))) { hidePad(); await DB.del('pin'); PIN = null; } } else await setPin(); PG_ON.priv(); });
+    tgl(L, t('appLock'), !!PIN, async () => { if (PIN) { if (await checkPin(t('pinCurrent'))) { hidePad(); if (await checkTsv(t('tsvCurrent'))) { await DB.del('pin'); PIN = null; if (TSV) { await DB.del('tsv'); TSV = null; } } } } else await setPin(); PG_ON.priv(); });
     if (PIN) {
-      tgl(L, t('changePin'), false, async () => { if (await checkPin(t('pinCurrent'))) { await setPin(); } PG_ON.priv(); });
+      tgl(L, t('changePin'), false, async () => { if (await checkPin(t('pinCurrent'))) { hidePad(); if (await checkTsv(t('tsvCurrent'))) await setPin(); } PG_ON.priv(); });
+      tgl(L, t('tsvTitle'), !!TSV, async () => {
+        if (TSV) { if (await checkTsv(t('tsvCurrent'))) { await DB.del('tsv'); TSV = null; toast(t('tsvOffToast')); } }
+        else { const r = await tsvSheet(t('tsvEnable')); if (r) { await saveTsv(r); toast(t('tsvOnToast')); } }
+        PG_ON.priv();
+      });
+      if (TSV) tgl(L, t('tsvChange'), false, async () => { if (await checkTsv(t('tsvCurrent'))) { const r = await tsvSheet(t('tsvChange')); if (r) { await saveTsv(r); toast(t('tsvOnToast')); } } PG_ON.priv(); });
+      const tp = document.createElement('p'); tp.textContent = PIN ? t('tsvP') : t('tsvNeedPin'); L.append(tp);
       const lb = document.createElement('div'); lb.className = 'sec'; lb.textContent = t('lockAfter'); const sg = document.createElement('div'); sg.className = 'seg';
       [[0, 'lockNow'], [60, 'lock1'], [300, 'lock5'], [-1, 'lockStart']].forEach(([v, l]) => { const b = document.createElement('button'); b.textContent = t(l); b.classList.toggle('on', S.set.lockAfter === v); b.onclick = () => { S.set.lockAfter = v; save(); PG_ON.priv(); }; sg.append(b); }); L.append(lb, sg);
     }
+    tgl(L, t('typShow'), !S.set.notyp, () => { S.set.notyp = S.set.notyp ? 0 : 1; save(); PG_ON.priv(); });
     tgl(L, t('noShots'), S.set.secure, () => { S.set.secure = S.set.secure ? 0 : 1; save(); applySettings(); PG_ON.priv(); });
     const B = $('#blk'); B.innerHTML = ''; const ks = Object.keys(S.block);
     if (!ks.length) B.innerHTML = '<p>' + t('noBlocked') + '</p>';
@@ -1226,7 +1362,28 @@
   $('#clc').onclick = async () => {
     if (!confirm(t('confirmClear'))) return; await DB.clearMsgs(); Object.values(S.c).concat(Object.values(S.g)).forEach(o => { o.last = 0; o.u = 0; o.lk = ''; o.lx = ''; }); M = {}; save(); list(); if (cur) back(); PG_ON.store(); toast(t('cleared'));
   };
-  PG_ON.about = () => { $('#abv').textContent = t('aboutVer') + ': ' + (NATIVE && NATIVE.version ? NATIVE.version() : 'web'); };
+  // ---------- update check (GitHub 'latest' release; release notes say "Build N") ----------
+  const REPO = 'd90f90y90-code/Shilagram', APK_URL = 'https://github.com/' + REPO + '/releases/download/latest/shilagram.apk';
+  async function checkUpdate(silent) {
+    const v = NATIVE && NATIVE.version ? NATIVE.version() : '', out = $('#updr');
+    if (!v) { if (!silent) out.textContent = t('updWeb'); return null; }
+    if (!silent) { out.textContent = t('updChecking'); $('#updd').hidden = true; }
+    const ctl = new AbortController(), tid = setTimeout(() => ctl.abort(), 12000);
+    try {
+      const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/tags/latest', { headers: { Accept: 'application/vnd.github+json' }, signal: ctl.signal, cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status); const j = await r.json(), notes = String(j.body || '') + ' ' + String(j.name || '');
+      const avail = F.updateAvailable(v, notes); updInfo = { avail, build: F.parseBuild(notes) };
+      if (!silent) { out.textContent = avail ? t('updAvail') + updInfo.build + ' (' + v + ')' : t('updLatest'); $('#updd').hidden = !avail; }
+      return avail;
+    } catch (e) { if (!silent) out.textContent = t('updFail'); return null; } finally { clearTimeout(tid); }
+  }
+  $('#updb').onclick = () => checkUpdate(false);
+  $('#updd').onclick = () => NATIVE && NATIVE.openUrl && NATIVE.openUrl(APK_URL);
+  PG_ON.about = () => {
+    $('#abv').textContent = t('aboutVer') + ': ' + (NATIVE && NATIVE.version ? NATIVE.version() : 'web');
+    $('#updr').textContent = updInfo ? (updInfo.avail ? t('updAvail') + updInfo.build : t('updLatest')) : ''; $('#updd').hidden = !(updInfo && updInfo.avail);
+    const L = $('#updt'); L.innerHTML = ''; tgl(L, t('updAuto'), S.set.autoUpd, () => { S.set.autoUpd = S.set.autoUpd ? 0 : 1; save(); PG_ON.about(); });
+  };
   $('#rst').onclick = async () => { if (!confirm(t('confirmReset'))) return; await DB.wipe(); try { localStorage.clear(); } catch (e) {} location.reload(); };
 
   // ---------- boot ----------
@@ -1235,7 +1392,8 @@
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
-  if (window.__DEBUG) window.__app = { S, conns, rot, seen, on, checkRotation, dirLookup, get dirPeer() { return dirPeer; }, get call() { return call; } };
-  await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); if (!ME.user) setTimeout(askUser, 500);
+  if (window.__DEBUG) window.__app = { S, conns, rot, seen, on, checkRotation, dirLookup, open, list, sendMsg, sweep, react, togglePin, getM, handlePlain, sendCtlQ, tsvLoop, askPassword, saveTsv, get TSV() { return TSV; }, get M() { return M; }, get typing() { return typing; }, get dirPeer() { return dirPeer; }, get call() { return call; } };
+  await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); sweep(); if (!ME.user) setTimeout(askUser, 500);
+  if (NATIVE && S.set.autoUpd && Date.now() - (S.updAt || 0) > 12 * 3600e3) setTimeout(async () => { S.updAt = Date.now(); save(); if (await checkUpdate(true)) toast(t('updBanner')); }, 8000);
   if (NATIVE && NATIVE.ready) try { NATIVE.ready(); } catch (e) {}
 })();

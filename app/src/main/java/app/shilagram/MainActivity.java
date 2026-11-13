@@ -148,6 +148,11 @@ public class MainActivity extends Activity {
         @JavascriptInterface public String version() {
             try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
         }
+        // update check: only this project's own GitHub release page may be opened (the system browser downloads the APK)
+        @JavascriptInterface public void openUrl(final String url) {
+            if (url == null || !url.startsWith("https://github.com/d90f90y90-code/Shilagram/")) return;
+            runOnUiThread(() -> { try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception e) { /* no browser */ } });
+        }
         @JavascriptInterface public void notifSettings() {
             runOnUiThread(() -> { try { startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())); } catch (Exception e) { } });
         }

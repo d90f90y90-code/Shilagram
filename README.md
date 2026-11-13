@@ -7,6 +7,9 @@ Serverless peer-to-peer messenger for Android (WebView app, PeerJS signaling onl
 - **End-to-end encryption**: ECDSA P-256 identity key per user, ephemeral ECDH + HKDF + AES-GCM per connection
 - **Identity pinning**: a contact's public key is pinned on first contact; a different key is rejected with a warning
   (Security screen shows fingerprints you can compare in person / over a call)
+- **Self-destructing messages** (per chat: 10 s / 1 min / 1 h / 1 day / 1 week, deleted on both sides), **forwarding** (with a "forwarded from" label), **pinned messages** bar, **emoji reactions**, **typing indicator** (can be switched off in Privacy)
+- **Two-step verification**: a password asked after the lock PIN (Privacy), with an optional hint; failed attempts are counted on disk with growing delays; also asked before exporting a backup
+- **Update check** (Settings → About): compares the installed build with the GitHub `latest` release and opens the APK download
 - Photos, files (≤10 MB), voice messages, stickers, reply, edit, delete for me / for everyone
 - Voice and video calls (WebRTC)
 - Add friends by key or by QR code
@@ -17,8 +20,9 @@ Serverless peer-to-peer messenger for Android (WebView app, PeerJS signaling onl
 
 ## Layout
 ```
-app/src/main/assets/   index.html style.css i18n.js crypto.js db.js app.js (+ vendored peerjs, qrcode, jsQR)
+app/src/main/assets/   index.html style.css i18n.js crypto.js db.js app.js features.js (+ vendored peerjs, qrcode, jsQR)
 app/src/main/java/     MainActivity (WebView host, permissions, notifications), ShFill (Sh-Fill folder + file server), KeepAliveService
+tests/features.test.js timers / reactions / pins / queue / update logic
 tests/crypto.test.js   handshake / impersonation / replay / tamper tests (node --test tests/crypto.test.js)
 .github/workflows/     test + build (APK artifact: shilagram-apk)
 ```
@@ -29,6 +33,9 @@ Add repository secrets `SHILA_KS_B64` (base64 of a PKCS12 keystore with alias `s
 Without them CI signs with a throwaway debug key and the APK cannot update an installed copy.
 
 ## Known limits
+- Reactions and pins sent while a friend is offline are queued (7 days) and delivered when they reconnect; typing indicators are live only.
+- Self-destruct timers start when a message arrives (receiver) or is delivered (sender); copies in Sh-Fill and screenshots are not affected.
+- Two-step verification password cannot be recovered; "Forgot password" wipes the app data.
 - Sh-Fill files are plain (not encrypted) and live in shared storage; Android 11+ needs "All files access" for the app (sideloaded APK only, Google Play restricts this permission).
 - No push server: both people must have the app running to exchange messages (foreground service helps while in background).
 - One device per key. A TURN server is needed for some mobile networks (default list uses the free Open Relay; override in Settings).
