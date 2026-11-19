@@ -196,3 +196,22 @@ img{-webkit-user-drag:none;user-drag:none}
 .emg{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin:6px 0}.emg button{font-size:21px;background:var(--bg2);border-radius:8px;padding:6px 0}
 .durs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.durs button{padding:6px 11px;border-radius:14px;background:var(--bg2);font-size:13px}.durs button.sel{background:var(--pri);color:#fff}
 #stkl{display:flex;flex-wrap:wrap;gap:8px;max-height:130px;overflow:auto;margin:6px 0}#stkl[hidden]{display:none}#stkl button{background:none;padding:2px}#stkl img{width:48px;height:48px;object-fit:contain}
+
+/* glass */
+html.glass .b {
+  background: rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  backdrop-filter: blur(12px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
+html.glass .b.me {
+  background: rgba(33, 150, 243, 0.28);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html.glass .b {
+    background: rgba(40, 40, 50, 0.85);
+  }
+}
