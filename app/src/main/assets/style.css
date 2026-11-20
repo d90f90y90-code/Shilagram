@@ -518,3 +518,50 @@ header small { font-size: 11.5px; opacity: .8; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ==========================================================================
+   Motion system — controlled by Settings → Theme → Animations (S.set.nomo).
+   The existing `.nomo` class turns everything off instantly.
+   ========================================================================== */
+@keyframes shila-bubble {
+  from { opacity: 0; transform: translateY(10px) scale(.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes shila-sheet {
+  from { opacity: .5; transform: translateY(26px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes shila-toast {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes shila-soft {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes shila-dot {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.22); }
+}
+
+#ms .b.pop { animation: shila-bubble .32s cubic-bezier(.2, .85, .3, 1.15) both; }
+#sh.on .card { animation: shila-sheet .3s cubic-bezier(.2, .8, .2, 1) both; }
+#toast { animation: shila-toast .26s ease-out both; }
+.pg.on .pbody > * { animation: shila-soft .3s ease-out both; }
+.pg.on .pbody > :nth-child(2) { animation-delay: .035s; }
+.pg.on .pbody > :nth-child(3) { animation-delay: .07s; }
+.pg.on .pbody > :nth-child(4) { animation-delay: .105s; }
+.pg.on .pbody > :nth-child(5) { animation-delay: .14s; }
+.pg.on .pbody > :nth-child(6) { animation-delay: .175s; }
+.av.on::after { animation: shila-dot 2.4s ease-in-out infinite; }
+
+.v, #chat, .pg { transition: transform .3s cubic-bezier(.2, .8, .2, 1); will-change: transform; }
+.tcards button { transition: transform .18s, box-shadow .18s; }
+.tcards button:hover { transform: translateY(-2px); }
+.tcards button:active { transform: scale(.97); }
+.sd:active, .em:active { transform: scale(.9); }
+.wb:active { transform: scale(.98); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

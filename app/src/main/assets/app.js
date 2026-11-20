@@ -33,7 +33,7 @@
   save();
 
   const VP = { el: null, mid: null }; // the voice message that is playing
-  let rot = {}, seen = {}, act = {}, bootT = Date.now(), M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null, tsvRes = null, pwRes = null, fwMsg = null, pinCur = 0, typSent = {}, typing = {}, updInfo = null;
+  let rot = {}, seen = {}, act = {}, bootT = Date.now(), M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null, tsvRes = null, pwRes = null, fwMsg = null, pinCur = 0, typSent = {}, typing = {}, updInfo = null, lastDrawKey = {};
   const ch = id => S.c[id] || S.g[id], isG = id => !!S.g[id], on = k => !!(conns[k] && conns[k].auth);
   const members = id => isG(id) ? Object.keys(S.g[id].mem).filter(k => k !== ME.key) : [id];
   const nmOf = (id, f) => f === ME.key ? ME.name : (S.c[f] && S.c[f].name) || (S.g[id] && S.g[id].mem[f]) || f;
@@ -338,8 +338,10 @@
     const o = ch(cur); if (!o) return; const live = VP.el && !VP.el.paused ? VP.el.src : null; urls.forEach(u => u !== live && URL.revokeObjectURL(u)); urls = live ? [live] : [];
     const Mm = $('#ms'), nearEnd = Mm.scrollHeight - Mm.scrollTop - Mm.clientHeight < 120; Mm.innerHTML = '';
     const url = b => { const u = URL.createObjectURL(b); urls.push(u); return u; };
-    (M[cur] || []).slice(-150).forEach(m => {
+    const shown = (M[cur] || []).slice(-150), lastKey = cur + '|' + (shown.length ? shown[shown.length - 1].mid : ''), fresh = lastDrawKey[cur] !== lastKey; lastDrawKey[cur] = lastKey;
+    shown.forEach((m, idx) => {
       const b = document.createElement('div'); b.className = 'b' + (m.me ? ' me' : '') + (m.kind === 'st' && !m.del ? ' st' : '') + (m.del ? ' del' : ''); b.dataset.mid = m.mid;
+      if (fresh && idx === shown.length - 1) b.classList.add('pop');
       if (isG(cur) && !m.me) { const n = document.createElement('b'); n.textContent = nmOf(cur, m.f) + (gTitle(cur, m.f) ? ' · ' + gTitle(cur, m.f) : ''); b.append(n); }
       if (m.fw && !m.del) { const f = document.createElement('span'); f.className = 'fw'; f.textContent = t('fwFrom') + m.fw; b.append(f); }
       if (m.r && !m.del) { const q = getM(cur, m.r); const rp = document.createElement('div'); rp.className = 'rp'; rp.textContent = q ? pvText(q) : '…'; b.append(rp); }
@@ -577,7 +579,7 @@
   }
   if (window.matchMedia) try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applySettings); } catch (e) {}
   function renderSettings() {
-    const st = S.set; $$('#thm button').forEach(b => b.classList.toggle('on', b.dataset.th === st.theme)); $('#fsz').value = st.fs;
+    const st = S.set; $$('#thm button').forEach(b => b.classList.toggle('on', b.dataset.th === st.theme)); $('#fsz').value = st.fs; $('#animToggle').checked = !st.nomo;
     const G = $('#bgs'); G.innerHTML = '';
     BGS.forEach(o => { const b = document.createElement('button'); if (o.t === 'none') b.textContent = '↺'; else b.style.background = o.v; b.classList.toggle('on', (st.bg.t === o.t && st.bg.v === o.v) || (o.t === 'none' && st.bg.t === 'none'));
       b.onclick = () => { st.bg = o.t === 'none' ? { t: 'none' } : { t: o.t, v: o.v }; save(); applySettings(); renderSettings(); }; G.append(b); });
@@ -585,6 +587,7 @@
   }
   $('#bst').onclick = () => showPage('set');
   $$('#thm button').forEach(b => b.onclick = () => { S.set.theme = b.dataset.th; save(); applySettings(); renderSettings(); });
+  $('#animToggle').onchange = e => { S.set.nomo = e.target.checked ? 0 : 1; save(); applySettings(); };
   $('#fsz').oninput = e => { S.set.fs = +e.target.value; save(); applySettings(); };
   $('#bgf').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { await DB.set('bgimg', await shrink(f, 1080)); await loadBg(); S.set.bg = { t: 'img' }; save(); applySettings(); renderSettings(); } catch (x) { alert(t('tooBig')); } };
   $('#icb').onclick = () => {
@@ -1450,7 +1453,6 @@
     const L = $('#cst2'); L.innerHTML = '';
     tgl(L, t('enterSend'), S.set.enter, () => { S.set.enter = S.set.enter ? 0 : 1; save(); PG_ON.chatset(); });
     tgl(L, t('h24'), S.set.h24, () => { S.set.h24 = S.set.h24 ? 0 : 1; save(); PG_ON.chatset(); });
-    tgl(L, t('noMotion'), S.set.nomo, () => { S.set.nomo = S.set.nomo ? 0 : 1; save(); applySettings(); PG_ON.chatset(); });
     $('#brr').value = S.set.br;
   };
   $('#brr').oninput = e => { S.set.br = +e.target.value; save(); applySettings(); };
