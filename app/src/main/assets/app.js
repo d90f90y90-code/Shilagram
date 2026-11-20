@@ -637,10 +637,28 @@
     for (const o of Object.values(S.c)) if (o.st && !F.statusActive(o.st, now)) { delete o.st; changed = true; }
     if (changed) { save(); list(); if (cur) drawHead(); if (viewKey && $('#pg-view').classList.contains('on')) fillView(viewKey); if (pgStack[pgStack.length - 1] === 'status') renderStatusList(); }
   }
-  async function tinyData(cv) { // shrink a canvas to a data URL that fits the status header limit
-    for (const q of [.8, .6, .45]) { const u = cv.toDataURL('image/webp', q); if (F.okStatusImg(u)) return u; }
-    const u = cv.toDataURL('image/jpeg', .5); return F.okStatusImg(u) ? u : null;
+  // Status media: keep the original file on-device, but send the sharpest thumbnail
+  // that still fits the peer header limit (9 KB). We try large sizes first, then shrink.
+  const ST_SIZES = [[360, 640], [300, 533], [240, 427], [192, 341], [144, 256], [112, 199], [96, 170]];
+  function statusThumb(draw) {
+    for (const [W, H] of ST_SIZES) {
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); draw(g, W, H);
+      for (const q of [.82, .68, .55, .42, .3]) {
+        const u = c.toDataURL('image/webp', q);
+        if (F.okStatusImg(u)) return u;
+      }
+    }
+    return null;
   }
+  const statusBmThumb = bm => statusThumb((g, W, H) => {
+    const s = Math.max(W / bm.width, H / bm.height), w = bm.width * s, h = bm.height * s;
+    g.drawImage(bm, (W - w) / 2, (H - h) / 2, w, h);
+  });
+  const statusCanvasThumb = cv => statusThumb((g, W, H) => {
+    const s = Math.max(W / cv.width, H / cv.height), w = cv.width * s, h = cv.height * s;
+    g.drawImage(cv, (W - w) / 2, (H - h) / 2, w, h);
+  });
   const DURK = { 1: 'ttl1h', 4: 'st4h', 12: 'st12h', 24: 'ttl1d', 72: 'st3d', 168: 'ttl7d', 0: 'stNever' };
   let stDraft = null;
   function stReset() {
@@ -694,9 +712,10 @@
   $('#stfile').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return; const keepH = stDraft ? stDraft.h : 24;
     try {
-      const u = await cropImage(f, { w: 128, h: 128, circle: 1, max: 8800 });
+      const bm = await createImageBitmap(f);
+      const u = statusBmThumb(bm); if (bm.close) bm.close();
       if (!u || !F.okStatusImg(u)) return toast(t('stNoImg'));
-      const img = rid(8); await DB.set('stimg:' + img, f);
+      const img = rid(8); await DB.set('stimg:' + img, f); // original stays on this device at full quality
       stDropDraft(); stDraft = { k: 'i', v: u, img, h: keepH }; stComposer();
     } catch (x) { toast(t('stNoImg')); }
   };
@@ -708,10 +727,10 @@
       const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
       await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; setTimeout(rej, 8000); });
       try { v.currentTime = Math.min(.1, (v.duration || 1) / 2); await new Promise(r => { v.onseeked = r; setTimeout(r, 1200); }); } catch (x) {}
-      const sc = Math.min(1, 360 / (v.videoWidth || 360)), cv = document.createElement('canvas');
-      cv.width = Math.max(1, Math.round((v.videoWidth || 360) * sc)); cv.height = Math.max(1, Math.round((v.videoHeight || 640) * sc));
+      const sc = Math.min(1, 480 / (v.videoWidth || 480)), cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round((v.videoWidth || 480) * sc)); cv.height = Math.max(1, Math.round((v.videoHeight || 854) * sc));
       cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height);
-      const poster = await tinyData(cv);
+      const poster = statusCanvasThumb(cv);
       if (!poster) return toast(t('stNoVideo'));
       const vid = rid(8); await DB.set('stvideo:' + vid, f);
       stDropDraft(); stDraft = { k: 'v', v: poster, vid, h: keepH }; stComposer(); toast(t('stPosterNote'));
@@ -730,7 +749,7 @@
   ['#sttxt', '#stbg', '#stfg', '#stfs'].forEach(s => $(s).oninput = sheetPreview);
   $('#stmk').onclick = async () => {
     if (!($('#sttxt').value || '').trim()) return ($('#ster').textContent = t('stBad'));
-    sheetPreview(); const u = await tinyData($('#stcanvas'));
+    sheetPreview(); const u = statusCanvasThumb($('#stcanvas'));
     if (!u) return ($('#ster').textContent = t('stNoImg'));
     let img = null;
     try { const blob = await new Promise(r => $('#stcanvas').toBlob(r, 'image/png')); if (blob) { img = rid(8); await DB.set('stimg:' + img, blob); } } catch (x) {}
@@ -764,8 +783,17 @@
       DB.get((st.k === 'v' ? 'stvideo:' : 'stimg:') + local).then(blob => {
         if (seq !== stViewSeq) return;
         if (!blob) return showImg(st.v);
-        if (st.k === 'v') { const v = document.createElement('video'); v.src = URL.createObjectURL(blob); v.controls = true; v.autoplay = true; v.playsInline = true; body.append(v); }
-        else showImg(URL.createObjectURL(blob));
+        if (st.k === 'v') {
+          const v = document.createElement('video');
+          v.src = URL.createObjectURL(blob); v.poster = st.v || '';
+          v.controls = true; v.autoplay = true; v.loop = true; v.preload = 'auto';
+          v.muted = true; v.defaultMuted = true; v.playsInline = true;
+          v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
+          v.onloadeddata = () => { if (seq === stViewSeq) v.play().catch(() => {}); };
+          v.onerror = () => { if (seq === stViewSeq) { v.remove(); showImg(st.v); toast(t('stVideoPlayFail')); } };
+          body.append(v); v.play().catch(() => {});
+          v.onclick = () => { if (v.paused) v.play().catch(() => {}); };
+        } else showImg(URL.createObjectURL(blob));
       }).catch(() => showImg(st.v));
     } else showImg(st.v);
   }
