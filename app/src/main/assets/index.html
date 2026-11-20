@@ -45,6 +45,8 @@
 <div class="v pg" id="pg-view"><header class="ph"><button class="ib pback"><svg class="ic bkic"><use href="#i-chev"/></svg></button><h1 id="vt"></h1><button class="phb" id="vedit" data-t="editBtn"></button></header>
 <div class="pbody"><div class="cov" id="vcov"><div class="pavb" id="vav"></div></div>
 <div class="infb"><div class="ir"><small data-t="fieldName"></small><b id="vn"></b></div><div class="ir"><small data-t="fieldUser"></small><b id="vu" dir="ltr"></b></div><div class="ir" id="vkr"><small data-t="fieldKey"></small><b id="vk" dir="ltr" class="kk"></b></div><div class="ir" id="vstr" style="cursor:pointer"><small data-t="stTitle"></small><b id="vstv"></b></div><div class="ir tall"><small data-t="fieldBio"></small><b id="vb" class="bio"></b></div></div>
+<div class="pactions"><button class="pa" id="pacopyuser"><svg class="ic"><use href="#i-users"/></svg><span data-t="copyUser"></span></button><button class="pa" id="pacopykey"><svg class="ic"><use href="#i-copy"/></svg><span data-t="copyKey"></span></button><button class="pa" id="paqr"><svg class="ic"><use href="#i-scan"/></svg><span id="paqrtxt" data-t="showQR"></span></button></div>
+<div class="qrbox" id="qrbox" hidden><div id="qrimg"></div><p data-t="qrHint"></p></div>
 <div id="vsec"><div class="sec" data-t="security"></div><p data-t="secP"></p><p><b data-t="fingerprintMine"></b></p><div class="fp" id="secme"></div><p><b data-t="theirPrint"></b></p><div class="fp" id="secthem"></div><button class="wb r" id="srt" data-t="resetTrust"></button></div></div></div>
 
 <div class="v pg" id="pg-edit"><header class="ph"><button class="phb" id="ecancel" data-t="cancel"></button><h1></h1><button class="phb" id="esv" data-t="saveBtn"></button></header>
@@ -123,4 +125,4 @@
 <div id="toast"></div>
 </div>
 <script src="peerjs.min.js"></script>
-<script src="i18n.js"></script><script src="crypto.js"></script><script src="groups.js"></script><script src="db.js"></script><script src="features.js"></script><script src="glass.js"></script><script src="app.js"></script></body></html>
+<script src="i18n.js"></script><script src="crypto.js"></script><script src="groups.js"></script><script src="db.js"></script><script src="features.js"></script><script src="glass.js"></script><script src="qrcode.min.js"></script><script src="app.js"></script></body></html>

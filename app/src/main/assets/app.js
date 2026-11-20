@@ -464,8 +464,23 @@
     $('#vt').textContent = o.name; bigAv($('#vav'), o.av, o.fc); $('#vcov').style.backgroundImage = 'url("' + (o.cv || DEF_COVER) + '")';
     setName($('#vn'), o.name, o.st); $('#vstr').style.display = me ? '' : 'none'; if (me) statusRow(); $('#vu').textContent = user ? '@' + user : '—'; $('#vk').textContent = key; $('#vb').textContent = o.bio || '—';
     $('#vedit').style.display = me ? '' : 'none'; $('#vsec').style.display = me ? 'none' : '';
+    $('#pacopyuser').style.display = user ? '' : 'none'; $('#pacopyuser').onclick = () => copyText('@' + user);
+    $('#pacopykey').onclick = () => copyText(key);
+    $('#paqr').style.display = me ? '' : 'none';
+    $('#qrbox').hidden = true; $('#paqrtxt').textContent = t('showQR');
     if (!me) { C.fingerprint(ID.pub).then(f => $('#secme').textContent = f); if (o.pk) C.fingerprint(C.unb64(o.pk)).then(f => $('#secthem').textContent = f); else $('#secthem').textContent = t('notVerified'); }
   }
+  $('#paqr').onclick = () => {
+    const box = $('#qrbox');
+    if (!box.hidden) { box.hidden = true; $('#paqrtxt').textContent = t('showQR'); return; }
+    const payload = 'shilagram://add?' + (ME.user ? 'u=' + ME.user + '&' : '') + 'k=' + ME.key;
+    box.hidden = false; $('#paqrtxt').textContent = t('hideQR');
+    const host = $('#qrimg'); host.innerHTML = '';
+    try {
+      if (window.QRCode) new QRCode(host, { text: payload, width: 192, height: 192, colorDark: '#0f172a', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+      else host.textContent = payload;
+    } catch (e) { host.textContent = payload; }
+  };
 
   // ---------- status: photo / video (local) / text sheet, with an optional timer ----------
   const stNode = st => { if (!F.statusActive(st, Date.now())) return null; const s = document.createElement('em'); s.className = 'stb' + (st.k === 'v' ? ' vid' : ''); if (st.k === 'e') s.textContent = st.v; else { const im = new Image(); im.alt = ''; im.src = st.v; s.append(im); } return s; };
@@ -1740,6 +1755,7 @@
   // ---------- boot ----------
   function applyLang() {
     $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t)); document.documentElement.style.setProperty('--sd', I18N.lang === 'ar' ? 1 : -1);
+    if ($('#qrbox') && !$('#qrbox').hidden) $('#paqrtxt').textContent = t('hideQR');
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh'); $('#gq').placeholder = t('searchPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
