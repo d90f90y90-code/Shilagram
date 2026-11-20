@@ -401,7 +401,7 @@
   // ---------- sheets ----------
   function sheet(n) { if (n !== 'tsv' && tsvRes) { const r = tsvRes; tsvRes = null; r(null); } if (n !== 'inc') pendingGroup = null; $('#x').style.display = n === 'un' ? 'none' : ''; $('#sh').classList.toggle('on', !!n); $$('.pn').forEach(p => p.classList.toggle('on', p.id === 'p-' + n)); if (n !== 'crop' && cropRes) { const r = cropRes; cropRes = null; r(null); } }
   const closeSheet = () => { if (userPending()) return; sheet(0); };
-  window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if ($('#shv').classList.contains('on')) { vClose(); return 1; } if ($('#call').classList.contains('on') && !$('#call').classList.contains('min')) { minimizeCall(); return 1; } if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
+  window.__back = () => { if ($('#lock').classList.contains('on')) { if (!$('#lkc').hidden) { $('#lkc').click(); return 1; } return 0; } if ($('#shv').classList.contains('on')) { vClose(); return 1; } if ($('#stview').classList.contains('on')) { closeStatusView(); return 1; } if ($('#call').classList.contains('on') && !$('#call').classList.contains('min')) { minimizeCall(); return 1; } if ($('#sh').classList.contains('on')) { closeSheet(); return 1; } if (pgStack.length) { closePage(); return 1; } if (cur) { back(); return 1; } return 0; };
   $('#x').onclick = closeSheet; $('#sh').onclick = e => { if (e.target.id === 'sh') closeSheet(); };
 
   // ---------- pages ----------
@@ -467,8 +467,8 @@
     if (!me) { C.fingerprint(ID.pub).then(f => $('#secme').textContent = f); if (o.pk) C.fingerprint(C.unb64(o.pk)).then(f => $('#secthem').textContent = f); else $('#secthem').textContent = t('notVerified'); }
   }
 
-  // ---------- status: emoji / sticker / photo next to the name, with an optional timer ----------
-  const stNode = st => { if (!F.statusActive(st, Date.now())) return null; const s = document.createElement('em'); s.className = 'stb'; if (st.k === 'e') s.textContent = st.v; else { const im = new Image(); im.alt = ''; im.src = st.v; s.append(im); } return s; };
+  // ---------- status: photo / video (local) / text sheet, with an optional timer ----------
+  const stNode = st => { if (!F.statusActive(st, Date.now())) return null; const s = document.createElement('em'); s.className = 'stb' + (st.k === 'v' ? ' vid' : ''); if (st.k === 'e') s.textContent = st.v; else { const im = new Image(); im.alt = ''; im.src = st.v; s.append(im); } return s; };
   function setName(el, name, st) { el.textContent = name; const n = stNode(st); if (n) { el.append(' '); el.append(n); } }
   function statusRow() {
     const el = $('#vstv'), n = stNode(ME.st), lv = F.statusLeft(ME.st, Date.now()); el.textContent = '';
@@ -476,20 +476,14 @@
   }
   function statusTick() {
     const now = Date.now(); let changed = false;
-    if (ME.st && !F.statusActive(ME.st, now)) { delete ME.st; DB.set('me', ME); broadcastProfile(); changed = true; }
+    if (ME.st && !F.statusActive(ME.st, now)) { if (ME.st.vid) DB.del('stvideo:' + ME.st.vid); delete ME.st; DB.set('me', ME); broadcastProfile(); changed = true; }
     for (const o of Object.values(S.c)) if (o.st && !F.statusActive(o.st, now)) { delete o.st; changed = true; }
     if (changed) { save(); list(); if (cur) drawHead(); if (viewKey && $('#pg-view').classList.contains('on')) fillView(viewKey); if (pgStack[pgStack.length - 1] === 'status') renderStatusList(); }
   }
-  async function thumbData(blob) { // sticker -> tiny data URL that fits the status size limit
-    const bm = await createImageBitmap(blob);
-    for (const sz of [64, 48, 40]) {
-      const c = document.createElement('canvas'); c.width = c.height = sz; const g = c.getContext('2d'), k = Math.min(sz / bm.width, sz / bm.height), w = bm.width * k, h = bm.height * k;
-      g.drawImage(bm, (sz - w) / 2, (sz - h) / 2, w, h);
-      for (const q of [.8, .6]) { const u = c.toDataURL('image/webp', q); if (F.okStatusImg(u)) return u; }
-      const u = c.toDataURL('image/png'); if (F.okStatusImg(u)) return u;
-    } return null;
+  async function tinyData(cv) { // shrink a canvas to a data URL that fits the status header limit
+    for (const q of [.8, .6, .45]) { const u = cv.toDataURL('image/webp', q); if (F.okStatusImg(u)) return u; }
+    const u = cv.toDataURL('image/jpeg', .5); return F.okStatusImg(u) ? u : null;
   }
-  const EMO = ['😀', '😎', '🥳', '😴', '🤔', '😍', '🤒', '😡', '🙏', '🔥', '💼', '🎮', '📚', '✈️', '🍕', '☕', '🏠', '🏋️', '🎧', '🌙', '❤️', '👍', '🎉', '💤'];
   const DURK = { 1: 'ttl1h', 4: 'st4h', 12: 'st12h', 24: 'ttl1d', 72: 'st3d', 168: 'ttl7d', 0: 'stNever' };
   let stDraft = null;
   function stRender() {
@@ -497,30 +491,78 @@
     $$('#stdur button').forEach(b => b.classList.toggle('sel', stDraft.h === +b.dataset.h));
   }
   function openStatus() {
-    const c = F.statusActive(ME.st, Date.now()) ? ME.st : null; stDraft = { k: c ? c.k : 'e', v: c ? c.v : '', h: 24 };
-    $('#stin').placeholder = t('stCustom'); $('#stin').value = ''; $('#sthr').placeholder = t('stCustomH'); $('#sthr').value = ''; $('#ster').textContent = ''; $('#stkl').hidden = true;
-    const E = $('#stemg'); E.innerHTML = ''; EMO.forEach(e => { const b = document.createElement('button'); b.textContent = e; b.onclick = () => { stDraft.k = 'e'; stDraft.v = e; $('#stin').value = ''; stRender(); }; E.append(b); });
+    const c = F.statusActive(ME.st, Date.now()) ? ME.st : null;
+    stDraft = { k: c ? c.k : 'i', v: c ? c.v : '', vid: c && c.vid, h: 24 };
+    $('#sthr').placeholder = t('stCustomH'); $('#sthr').value = ''; $('#ster').textContent = '';
+    $('#stwriter').hidden = true; $('#sttxt').value = ''; $('#stclr').style.display = c ? '' : 'none';
     const D = $('#stdur'); D.innerHTML = ''; F.STATUS_HOURS.forEach(h => { const b = document.createElement('button'); b.dataset.h = h; b.textContent = t(DURK[h]); b.onclick = () => { stDraft.h = h; $('#sthr').value = ''; stRender(); }; D.append(b); });
-    $('#stclr').style.display = c ? '' : 'none'; stRender(); sheet('st');
+    stRender(); sheet('st');
   }
   $('#vstr').onclick = openStatus;
-  $('#stin').oninput = e => { const v = e.target.value.trim(); if (F.okEmoji(v)) { stDraft.k = 'e'; stDraft.v = v; stRender(); } };
   $('#sthr').oninput = e => { stDraft.h = e.target.value === '' ? 24 : +e.target.value; stRender(); };
-  $('#stsk').onclick = async () => {
-    const B = $('#stkl'); B.hidden = !B.hidden; if (B.hidden) return; B.innerHTML = ''; const L = await DB.stickers(); if (!L.length) { B.textContent = t('stNoStk'); return; }
-    L.forEach(s => { const b = document.createElement('button'), im = new Image(); im.src = URL.createObjectURL(s.b); b.append(im); b.onclick = async () => { const u = await thumbData(s.b).catch(() => null); if (!u) return toast(t('stNoImg')); stDraft = { k: 'i', v: u, h: stDraft.h }; B.hidden = true; stRender(); }; B.append(b); });
-  };
   $('#stph').onclick = () => $('#stfile').click();
   $('#stfile').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return; const keep = stDraft;
-    try { const u = await cropImage(f, { w: 64, h: 64, circle: 1, max: 8000 }); stDraft = keep; if (u && F.okStatusImg(u)) { stDraft.k = 'i'; stDraft.v = u; } else if (u) toast(t('stNoImg')); } catch (x) { toast(t('stNoImg')); }
-    sheet('st'); stRender();
+    try { const u = await cropImage(f, { w: 64, h: 64, circle: 1, max: 8000 }); if (u && F.okStatusImg(u)) { stDraft = { k: 'i', v: u, h: keep.h }; stRender(); } else toast(t('stNoImg')); } catch (x) { toast(t('stNoImg')); }
+  };
+  $('#stvid').onclick = () => $('#stvfile').click();
+  $('#stvfile').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    if (f.size > MAXB) return toast(t('stVideoBig'));
+    const keep = stDraft, url = URL.createObjectURL(f);
+    try {
+      const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
+      await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; setTimeout(rej, 8000); });
+      try { v.currentTime = Math.min(.1, (v.duration || 1) / 2); await new Promise(r => { v.onseeked = r; setTimeout(r, 1200); }); } catch (x) {}
+      const sc = Math.min(1, 360 / (v.videoWidth || 360)), cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round((v.videoWidth || 360) * sc)); cv.height = Math.max(1, Math.round((v.videoHeight || 640) * sc));
+      cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height);
+      const poster = await tinyData(cv);
+      if (!poster) return toast(t('stNoVideo'));
+      const vid = rid(8); await DB.set('stvideo:' + vid, f);
+      stDraft = { k: 'v', v: poster, vid, h: keep.h }; stRender(); toast(t('stPosterNote'));
+    } catch (x) { toast(t('stNoVideo')); } finally { URL.revokeObjectURL(url); }
+  };
+  function sheetPreview() {
+    const cv = $('#stcanvas'); cv.width = 360; cv.height = 640; const g = cv.getContext('2d');
+    g.fillStyle = $('#stbg').value; g.fillRect(0, 0, cv.width, cv.height);
+    g.fillStyle = $('#stfg').value; g.font = '600 ' + (+$('#stfs').value) + 'px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const lines = [], words = ($('#sttxt').value || t('stTxtPh')).split(/\s+/); let line = '';
+    words.forEach(w => { const test = line ? line + ' ' + w : w; if (g.measureText(test).width > 310 && line) { lines.push(line); line = w; } else line = test; });
+    if (line) lines.push(line);
+    const lh = (+$('#stfs').value) * 1.35, top = cv.height / 2 - (lines.length - 1) * lh / 2;
+    lines.forEach((l, i) => g.fillText(l, cv.width / 2, top + i * lh));
+  }
+  $('#stwrite').onclick = () => { const w = $('#stwriter'); w.hidden = !w.hidden; if (!w.hidden) { sheetPreview(); $('#sttxt').focus(); } };
+  ['#sttxt', '#stbg', '#stfg', '#stfs'].forEach(s => $(s).oninput = sheetPreview);
+  $('#stmk').onclick = async () => {
+    if (!($('#sttxt').value || '').trim()) return ($('#ster').textContent = t('stBad'));
+    sheetPreview(); const u = await tinyData($('#stcanvas'));
+    if (!u) return ($('#ster').textContent = t('stNoImg'));
+    stDraft = { k: 'i', v: u, h: stDraft.h }; $('#stwriter').hidden = true; $('#ster').textContent = ''; stRender();
   };
   $('#stok').onclick = () => {
-    const st = F.makeStatus(stDraft.k, stDraft.v, stDraft.h, Date.now()); if (!st) return ($('#ster').textContent = t('stBad'));
+    const st = F.makeStatus(stDraft.k, stDraft.v, stDraft.h, Date.now(), stDraft.vid); if (!st) return ($('#ster').textContent = t('stBad'));
+    if (ME.st && ME.st.vid && ME.st.vid !== st.vid) DB.del('stvideo:' + ME.st.vid);
     ME.st = st; DB.set('me', ME); broadcastProfile(); sheet(0); if (viewKey === ME.key) fillView(ME.key); toast(t('stSaved'));
   };
-  $('#stclr').onclick = () => { delete ME.st; DB.set('me', ME); broadcastProfile(); sheet(0); if (viewKey === ME.key) fillView(ME.key); toast(t('stCleared')); };
+  $('#stclr').onclick = () => { if (ME.st && ME.st.vid) DB.del('stvideo:' + ME.st.vid); delete ME.st; DB.set('me', ME); broadcastProfile(); sheet(0); if (viewKey === ME.key) fillView(ME.key); toast(t('stCleared')); };
+  let stViewSeq = 0;
+  function openStatusView(k) {
+    const st = k === ME.key ? ME.st : (S.c[k] && S.c[k].st); if (!st) return;
+    const o = ch(k); closeStatusView(); const seq = ++stViewSeq, body = $('#stvbody'); $('#stvnm').textContent = k === ME.key ? t('statusMe') : (o && o.name || k);
+    $('#stve').hidden = k !== ME.key; $('#stview').classList.add('on');
+    if (st.k === 'v' && st.vid) {
+      DB.get('stvideo:' + st.vid).then(blob => {
+        if (seq !== stViewSeq) return;
+        if (!blob) { const im = new Image(); im.src = st.v; body.append(im); return; }
+        const v = document.createElement('video'); v.src = URL.createObjectURL(blob); v.controls = true; v.autoplay = true; v.playsInline = true; body.append(v);
+      });
+    } else { const im = new Image(); im.src = st.v; body.append(im); }
+  }
+  function closeStatusView() { stViewSeq++; $('#stview').classList.remove('on'); const v = $('#stvbody video'); if (v) { v.pause(); if (v.src) URL.revokeObjectURL(v.src); } $('#stvbody').innerHTML = ''; }
+  $('#stvc').onclick = closeStatusView;
+  $('#stve').onclick = () => { closeStatusView(); openStatus(); };
   function openProfileView(key) { fillView(key); showPage('view'); }
   $('#mav').onclick = () => openProfileView(ME.key);
   $('#vkr').onclick = () => copyText(viewKey);
@@ -1560,7 +1602,7 @@
       const b = document.createElement('button'); b.className = 'stab';
       const ring = document.createElement('span'); ring.className = 'sring'; const n = stNode(st); if (n) ring.append(n); b.append(ring);
       const nm = document.createElement('span'); nm.className = 'sname'; nm.textContent = mine ? t('statusMe') : (o.name || k); b.append(nm);
-      b.onclick = () => mine ? openStatus() : openProfileView(k);
+      b.onclick = () => openStatusView(k);
       strip.append(b);
     });
   }
@@ -1577,7 +1619,7 @@
       s.textContent = (st.k === 'e' ? st.v : '🖼 ' + t('photo')) + (lv ? ' · ' + t('stLeft') + lv.n + ' ' + t('st_' + lv.u) : '');
       mid.append(b, s); r.append(mid);
       const meta = document.createElement('div'); meta.className = 'meta'; const d = document.createElement('div'); const n = stNode(st); if (n) d.append(n); meta.append(d); r.append(meta);
-      r.onclick = () => mine ? openStatus() : openProfileView(k);
+      r.onclick = () => openStatusView(k);
       L.append(r);
     });
   }
