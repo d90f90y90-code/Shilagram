@@ -883,7 +883,17 @@
     S.out[k] = { name: (conns[k] && conns[k].peerName) || un, un, ts: Date.now() }; save(); list(); sheet(0); toast(t('reqSent') + ' @' + un);
   }
   $('#fg').onclick = async () => {
-    const un = $('#fk').value.trim().replace(/^@/, ''); if (srch) return;
+    const input = $('#fk').value.trim().replace(/^@/, ''); if (srch) return;
+    const km = /([A-Z]{6}\d{4})/.exec(input);
+    if (km) { // add by public key (bots are added this way)
+      const k = km[1]; if (k === ME.key) return $('#fs').textContent = t('yourOwn');
+      if (S.c[k]) { sheet(0); return open(k); }
+      if (S.req[k]) { acceptReq(k); sheet(0); return open(k); }
+      if (S.out[k]) return $('#fs').textContent = t('reqAlready');
+      if (!peer || peer.disconnected) return $('#fs').textContent = t('noNet');
+      S.out[k] = { name: k, un: '', ts: Date.now() }; save(); list(); sheet(0); connect(k); toast(t('reqSent') + ' ' + k); return;
+    }
+    const un = input;
     if (!USERRE.test(un)) return $('#fs').textContent = t('badQuery'); const l = un.toLowerCase();
     if (ME.user && ME.user.toLowerCase() === l) return $('#fs').textContent = t('yourOwn');
     const find = o => Object.keys(o).find(k => (o[k].un || '').toLowerCase() === l);
