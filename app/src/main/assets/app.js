@@ -1979,20 +1979,29 @@
       else { const el = document.createElement(/^h[1-4]$/.test(b.tag) ? b.tag : (b.tag === 'blockquote' ? 'blockquote' : 'p')); el.textContent = b.x; body.append(el); }
     });
   }
-  async function feedOpen(it) {
+  async function cleanWithAI(raw, title, quiet) {
+    if (quiet && !BOT.api) return null;
+    const out = await askAI('clean', articleText(raw), title);
+    return out ? textToBlocks(out, raw) : null;
+  }
+  async function feedOpen(it, auto) {
     if (!it || (!it.link && !it.html && !it.blocks)) return;
     showPage('article'); articleItem = Object.assign({}, it);
     const body = $('#articleBody'); $('#artext').hidden = !it.link;
     $('#arttitle').textContent = it.title || t('articleTitle');
-    $('#ardel').hidden = !it.local;
+    $('#ardel').hidden = !it.local; $('#articleTrans').hidden = true;
     body.innerHTML = ''; body.textContent = t('articleLoading') + ' '; body.append(typingDots());
     try {
       const raw = await ShilaFeed.article(it, S.set.feed.proxy);
-      const clean = S.set.feed.clean !== 0 && (it.type === 'site' || it.from === 'site');
-      articleItem.raw = raw; articleItem.cleaned = clean;
-      articleItem.blocks = clean ? ShilaFeed.purify(raw) : raw;
-      drawArticleBlocks(articleItem.blocks);
+      articleItem.sourceBlocks = raw; articleItem.cleaned = false;
+      let blocks = raw;
+      if (S.set.feed.clean !== 0 && (it.type === 'site' || it.from === 'site')) {
+        const ai = await cleanWithAI(raw, articleItem.title, true);
+        blocks = ai || ShilaFeed.purify(raw); articleItem.cleaned = !!ai;
+      }
+      articleItem.blocks = blocks; drawArticleBlocks(blocks);
       $('#artext').onclick = () => feedExternal(it.link);
+      if (auto === 'translate') articleInline('translate');
     } catch (e) {
       body.innerHTML = '';
       const p = document.createElement('p'); p.className = 'empty'; p.textContent = t('articleFail'); body.append(p);
@@ -2029,15 +2038,29 @@
     if (!articleItem || !articleItem.blocks) return toast(t('articleNoContent'));
     feedAI(kind, articleText(articleItem.blocks), articleItem.title);
   };
-  $('#artr').onclick = () => articleAI('translate');
+  async function articleInline(kind) {
+    if (!articleItem || !articleItem.blocks) return toast(t('articleNoContent'));
+    const panel = $('#articleTrans'), out = $('#aitransBody');
+    panel.hidden = false; $('#aitransTitle').textContent = t(kind === 'translate' ? 'articleTransTitle' : 'articleAITitle');
+    out.textContent = t('botThinking') + ' '; out.append(typingDots());
+    const ans = await askAI(kind, articleText(articleItem.blocks), articleItem.title);
+    if (ans) { out.textContent = ans; $('#aitransCopy').onclick = () => copyText(ans); }
+    else panel.hidden = true;
+  }
+  $('#aitransClose').onclick = () => { $('#articleTrans').hidden = true; };
+  $('#artr').onclick = () => articleInline('translate');
   $('#arts').onclick = () => articleAI('summary');
   $('#artan').onclick = () => articleAI('analyze');
-  $('#arclean').onclick = () => {
-    if (!articleItem || !articleItem.raw) return toast(t('articleNoContent'));
-    articleItem.cleaned = !articleItem.cleaned;
-    articleItem.blocks = articleItem.cleaned ? ShilaFeed.purify(articleItem.raw) : articleItem.raw;
-    drawArticleBlocks(articleItem.blocks);
-    toast(t(articleItem.cleaned ? 'cleanDone' : 'cleanOff'));
+  $('#arclean').onclick = async () => {
+    if (!articleItem || !articleItem.sourceBlocks) return toast(t('articleNoContent'));
+    if (articleItem.cleaned) {
+      articleItem.blocks = articleItem.sourceBlocks; articleItem.cleaned = false;
+      drawArticleBlocks(articleItem.blocks); toast(t('cleanOff')); return;
+    }
+    const out = await cleanWithAI(articleItem.sourceBlocks, articleItem.title);
+    if (!out) return;
+    articleItem.blocks = out; articleItem.cleaned = true;
+    drawArticleBlocks(articleItem.blocks); toast(t('cleanDone'));
   };
   function renderFeed() {
     const L = $('#feedlist'); if (!L) return; L.innerHTML = '';
@@ -2057,7 +2080,7 @@
       const btn = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; row.append(b); };
       const full = articleText(it.blocks) || (it.title + '\n' + (it.desc || ''));
       btn('↗ ' + t('feedOpen'), () => feedOpen(it));
-      btn('🌐 ' + t('feedTranslate'), () => feedAI('translate', full, it.title));
+      btn('🌐 ' + t('feedTranslate'), () => feedOpen(it, 'translate'));
       btn('📝 ' + t('feedSummary'), () => feedAI('summary', full, it.title));
       btn('🔍 ' + t('feedAnalyze'), () => feedAI('analyze', full, it.title));
       if (it.img) { const im = new Image(); im.className = 'fthumb'; im.loading = 'lazy'; im.src = it.img; im.onerror = () => im.remove(); c.append(im); }
@@ -2105,21 +2128,41 @@
     $('#feedproxy').value = S.set.feed.proxy || '';
     $('#feedclean').checked = S.set.feed.clean !== 0;
   }
-  async function feedAI(kind, text, title) {
-    if (!window.ShilaBot || !BOT.api) { toast(t('feedNeedKey')); showPage('bot'); return; }
-    sheet('ai');
-    const body = $('#aibody'); $('#aititle').textContent = t('feedAI' + kind);
-    body.textContent = t('botThinking') + ' '; body.append(typingDots());
-    const lang = S.set.feed.lang || 'ar', src = (title ? title + '\n' : '') + String(text || '').slice(0, 5000);
+  function aiPrompt(kind, text, title) {
+    const lang = S.set.feed.lang || 'ar', src = (title ? title + '\n' : '') + String(text || '').slice(0, 6000);
     const prompts = {
       translate: 'ترجم النص التالي إلى ' + lang + '. أعد الترجمة فقط دون أي شرح:\n' + src,
       summary: 'لخّص النص التالي في ٣ نقاط موجزة بلغة ' + lang + ':\n' + src,
       analyze: 'حلّل النص التالي بلغة ' + lang + '، ووضّح أهميته وأبرز الحقائق والأثر المتوقع بأسلوب موضوعي مختصر:\n' + src,
-      digest: 'أنت محرر أخبار. حوّل العناوين التالية إلى موجز في ٥ نقاط بلغة ' + lang + '، مع ذكر المصدر إن وُجد:\n' + src
+      digest: 'أنت محرر أخبار. حوّل العناوين التالية إلى موجز في ٥ نقاط بلغة ' + lang + '، مع ذكر المصدر إن وُجد:\n' + src,
+      clean: 'أنت محرر أخبار محترف. نظّف النص التالي من كل النصوص الزائدة: عبارات المشاركة والاشتراك، مسارات التنقل، الإعلانات، التعليقات، بيانات النشر المكررة، والفقرات المكررة. احتفظ بصياغة الخبر الأصلية وحقائقه وترتيبه كما هي تماماً. لا تترجم، لا تضف رأيك، لا تلخّص، ولا تغيّر أي كلمة. أعد النص النظيف فقط دون أي شرح:\n' + src
     };
-    let ans = '';
-    try { ans = await window.ShilaBot.ask(BOT, [], prompts[kind] || prompts.summary); body.textContent = ans; }
-    catch (e) { body.textContent = t('botFail') + (e && e.message ? e.message.slice(0, 180) : '?'); }
+    return prompts[kind] || prompts.summary;
+  }
+  async function askAI(kind, text, title) {
+    if (!window.ShilaBot || !BOT.api) { toast(t('feedNeedKey')); showPage('bot'); return null; }
+    try { return await window.ShilaBot.ask(BOT, [], aiPrompt(kind, text, title)); }
+    catch (e) { toast(t('botFail') + (e && e.message ? e.message.slice(0, 140) : '?')); return null; }
+  }
+  function textToBlocks(txt, raw) {
+    const lines = String(txt || '').split(/\r?\n/).map(s => s.trim().replace(/^#{1,4}\s*/, '').replace(/^[-*•]\s*/, ''))
+      .filter(s => s.length > 1);
+    const out = []; let i = 0;
+    (raw || []).forEach(b => {
+      if (b.k === 'i') out.push(b);
+      else if (i < lines.length) out.push({ k: 't', tag: 'p', x: lines[i++] });
+    });
+    while (i < lines.length) out.push({ k: 't', tag: 'p', x: lines[i++] });
+    return out.length ? out : (raw || []);
+  }
+  async function feedAI(kind, text, title) {
+    sheet('ai');
+    const body = $('#aibody'); $('#aititle').textContent = t('feedAI' + kind);
+    body.textContent = t('botThinking') + ' '; body.append(typingDots());
+    const ans = await askAI(kind, text, title);
+    if (ans) body.textContent = ans;
+    else if (!$('#sh').classList.contains('on')) return;
+    else body.textContent = t('botFail');
     $('#aiout').onclick = () => { if (ans) copyText(ans); };
   }
   PG_ON.feed = () => {

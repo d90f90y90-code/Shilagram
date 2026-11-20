@@ -872,6 +872,13 @@ header small { font-size: 11.5px; opacity: .8; }
 .articlebody img { display: block; width: 100%; height: auto; margin: 14px 0; border-radius: 12px; background: var(--bg2); }
 .articlebody .empty { text-align: center; padding: 30px 10px; color: var(--mut); font-size: 13px; }
 .articlebody > .btn { width: 100%; }
+.aitrans { margin: 10px 14px 0; padding: 12px; border: 1px solid var(--pri); border-radius: 14px; background: var(--bg2); animation: shila-soft .24s ease-out both; }
+.aitrans[hidden] { display: none !important; }
+.aith { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.aith b { font-size: 12.5px; color: var(--pri); }
+.aith span { display: flex; gap: 5px; }
+.aith button { padding: 4px 9px; font-size: 11px; border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.aitrans .aibody { max-height: 38vh; min-height: 60px; font-size: 13.5px; }
 
 /* Copy/save tool + locally saved news */
 .articleacts {
@@ -913,5 +920,5 @@ header small { font-size: 11.5px; opacity: .8; }
   color: var(--ink); font-size: 12.5px; font-weight: 600;
 }
 .fcheck input { width: 16px; height: 16px; accent-color: var(--pri); }
-.nomo .fgrp, .nomo .fgrpbody { animation: none; transition: none; }
-@media (prefers-reduced-motion: reduce) { .fgrp, .fgrpbody { animation: none; transition: none; } }
+.nomo .fgrp, .nomo .fgrpbody, .nomo .aitrans { animation: none; transition: none; }
+@media (prefers-reduced-motion: reduce) { .fgrp, .fgrpbody, .aitrans { animation: none; transition: none; } }
