@@ -62,6 +62,42 @@
   }
   document.addEventListener('contextmenu', e => { if (!/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) e.preventDefault(); });
 
+  // ---------- ShilaBot ----------
+  const BOT_DEF = { on: false, name: 'شيلا بوت', bio: '', prompt: '', key: '', model: 'gemini-2.5-flash', av: '', mention: false };
+  let BOT = Object.assign({}, BOT_DEF, (await DB.get('bot')) || {});
+  const botSave = () => DB.set('bot', BOT), botBusy = {};
+  const botClean = x => String(x || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 4000);
+  async function botReply(id, from, text) {
+    if (!BOT.on || !BOT.key || botBusy[id] || !text || from === ME.key) return;
+    if (isG(id) && BOT.mention && !(new RegExp('@?' + BOT.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')).test(text)) return;
+    botBusy[id] = 1;
+    try {
+      const hist = (M[id] || []).slice(-6).filter(m => m.kind === 't' && !m.del).map(m => ({ x: botClean(m.x), me: !!m.me }));
+      const ans = await (window.ShilaBot ? window.ShilaBot.ask(BOT, hist, text) : Promise.reject(new Error('bot lib')));
+      await sendMsg({ kind: 't', x: ans, bn: BOT.name }, id);
+    } catch (e) { /* silent: never break chat */ }
+    finally { delete botBusy[id]; }
+  }
+  $('#botkeyeye').onclick = () => { const i = $('#botkey'); i.type = i.type === 'password' ? 'text' : 'password'; };
+  $('#botfile').onchange = async e => {
+    const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
+    try { BOT.av = await cropImage(f, { w: 256, h: 256 }); if ($('#botav')) bigAv($('#botav'), BOT.av, '#8b5cf6'); botSave(); } catch (er) { $('#boterr').textContent = t('stNoImg'); }
+  };
+  $('#botavb').onclick = () => $('#botfile').click();
+  $('#bottest').onclick = async () => {
+    const cfg = { key: $('#botkey').value.trim(), model: $('#botmodel').value, prompt: $('#botprompt').value };
+    if (!cfg.key) return $('#boterr').textContent = t('botNeedKey');
+    $('#boterr').textContent = t('botTesting');
+    try { await window.ShilaBot.ask(cfg, [], t('botTest')); $('#boterr').textContent = t('botOk'); }
+    catch (e) { $('#boterr').textContent = t('botFail') + (e && e.message ? e.message.slice(0, 120) : '?'); }
+  };
+  $('#botsave').onclick = async () => {
+    BOT.name = noCtl($('#botname').value, 30) || BOT_DEF.name; BOT.bio = noCtl($('#botbio').value, 140);
+    BOT.prompt = noCtl($('#botprompt').value, 8000); BOT.key = $('#botkey').value.trim(); BOT.model = $('#botmodel').value;
+    BOT.on = !!$('#boton').checked; BOT.mention = !!$('#botmention').checked;
+    await botSave(); toast(t('botSaved')); closePage();
+  };
+
   // ---------- messages ----------
   async function addMsg(id, m) {
     await DB.putMsg(m);
@@ -75,7 +111,7 @@
   }
   function sealTo(c, h, bin) { return C.seal(c.aes, h, bin).then(f => { try { c.send(f); return true; } catch (e) { return false; } }); }
   async function sendMsgTo(c, id, m) {
-    const h = { t: 'm', i: m.mid, ts: m.ts, kind: m.kind, x: m.x, mime: m.mime, name: m.name, dur: m.dur, r: m.r, fw: m.fw, ex: m.ttl };
+    const h = { t: 'm', i: m.mid, ts: m.ts, kind: m.kind, x: m.x, mime: m.mime, name: m.name, dur: m.dur, r: m.r, fw: m.fw, ex: m.ttl, bn: m.bn };
     if (isG(id)) h.g = id;
     const ok = await sealTo(c, h, m.b ? await m.b.arrayBuffer() : null);
     if (ok && !m.sent) { m.sent = 1; DB.putMsg(m); }
@@ -232,6 +268,7 @@
         const kind = ['t', 'img', 'st', 'vo', 'file'].includes(h.kind) ? h.kind : 't';
         const m = { id: rid_, mid, chat: id, f: k, me: 0, ts: Math.min(Number(h.ts) || Date.now(), Date.now()), kind, p: [] };
         if (kind === 't') m.x = String(h.x || '').slice(0, 8000);
+        if (h.bn) m.bn = String(h.bn).slice(0, 30);
         else {
           if (!bin || !bin.length || bin.length > MAXB + 1024) return;
           let mime = String(h.mime || '').slice(0, 60);
@@ -248,6 +285,7 @@
         await addMsg(id, m);
         shAuto(m, id);
         notify(t('msgFrom') + nmOf(id, k), pvText(m), id);
+        if (BOT.on && kind === 't' && !m.bn) botReply(id, k, m.x);
       }
       sealTo(c, { t: 'a', i: mid, g: h.g });
     } else if (h.t === 'a') {
@@ -347,6 +385,7 @@
       const b = document.createElement('div'); b.className = 'b' + (m.me ? ' me' : '') + (m.kind === 'st' && !m.del ? ' st' : '') + (m.del ? ' del' : ''); b.dataset.mid = m.mid;
       if (fresh && idx === shown.length - 1) b.classList.add('pop');
       if (isG(cur) && !m.me) { const n = document.createElement('b'); n.textContent = nmOf(cur, m.f) + (gTitle(cur, m.f) ? ' · ' + gTitle(cur, m.f) : ''); b.append(n); }
+      if (m.bn && !m.del) { const n = document.createElement('b'); n.className = 'botn'; n.textContent = '🤖 ' + m.bn; b.append(n); }
       if (m.fw && !m.del) { const f = document.createElement('span'); f.className = 'fw'; f.textContent = t('fwFrom') + m.fw; b.append(f); }
       if (m.r && !m.del) { const q = getM(cur, m.r); const rp = document.createElement('div'); rp.className = 'rp'; rp.textContent = q ? pvText(q) : '…'; b.append(rp); }
       if (m.del) { const s = document.createElement('span'); s.textContent = t('deleted'); b.append(s); }
@@ -406,6 +445,11 @@
 
   // ---------- pages ----------
   const pgStack = [], PG_ON = {};
+  PG_ON.bot = () => {
+    $('#botname').value = BOT.name; $('#botbio').value = BOT.bio; $('#botprompt').value = BOT.prompt;
+    $('#botkey').value = BOT.key; $('#botmodel').value = BOT.model; $('#boton').checked = !!BOT.on; $('#botmention').checked = !!BOT.mention;
+    bigAv($('#botav'), BOT.av, '#8b5cf6'); $('#boterr').textContent = '';
+  };
   function showPage(n) { const el = $('#pg-' + n); if (!el || pgStack[pgStack.length - 1] === n) return; pgStack.push(n); el.style.zIndex = 10 + pgStack.length; el.classList.add('on'); if (PG_ON[n]) PG_ON[n](); updateTabbar(); }
   function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'gmedia' || n === 'shf') dlClear(); if (n === 'shfc' && pgStack[pgStack.length - 1] === 'shf') renderShf(); updateTabbar(); }
   $$('[data-pg]').forEach(b => b.onclick = () => showPage(b.dataset.pg)); $$('.pback').forEach(b => b.onclick = closePage);
