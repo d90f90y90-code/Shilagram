@@ -1855,7 +1855,7 @@
   $('#updb').onclick = () => checkUpdate(false);
   $('#updd').onclick = () => NATIVE && NATIVE.openUrl && NATIVE.openUrl(APK_URL);
   PG_ON.about = () => {
-    $('#abv').textContent = t('aboutVer') + ': ' + (NATIVE && NATIVE.version ? NATIVE.version() : 'web');
+    $('#abv').textContent = t('aboutVer') + ': ' + (NATIVE && NATIVE.version ? NATIVE.version() : 'v3.1');
     $('#updr').textContent = updInfo ? (updInfo.avail ? t('updAvail') + updInfo.build : t('updLatest')) : ''; $('#updd').hidden = !(updInfo && updInfo.avail);
     const L = $('#updt'); L.innerHTML = ''; tgl(L, t('updAuto'), S.set.autoUpd, () => { S.set.autoUpd = S.set.autoUpd ? 0 : 1; save(); PG_ON.about(); });
   };
