@@ -663,3 +663,57 @@ header small { font-size: 11.5px; opacity: .8; }
 #stvc { inset-inline-end: 12px; }
 #stve { inset-inline-end: 60px; font-size: 18px; }
 #stve[hidden] { display: none; }
+
+/* ==========================================================================
+   Status hub: publish + browse in one place
+   ========================================================================== */
+.sthub { padding: 6px 14px 8px; }
+.stpub {
+  padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  background: var(--bg2); border: 1px solid var(--hair); border-radius: 20px;
+  box-shadow: 0 8px 26px rgba(15, 23, 42, .06);
+}
+.addstat {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; background: none;
+  border: 0; color: var(--ink); font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.asplus {
+  width: 66px; height: 66px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 38px; line-height: 1; font-weight: 300; color: #fff;
+  background: conic-gradient(from 0deg, var(--pri), var(--acc), var(--pri));
+  box-shadow: 0 5px 18px rgba(15, 23, 42, .2); transition: transform .18s;
+}
+.addstat:active .asplus { transform: scale(.92); }
+.stchoices { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; animation: shila-soft .2s ease-out both; }
+.stchoices button {
+  display: flex; flex-direction: column; align-items: center; gap: 5px; width: 88px;
+  padding: 11px 5px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--hair); border-radius: 14px;
+  transition: transform .18s, box-shadow .18s;
+}
+.stchoices button:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(15, 23, 42, .09); }
+.stchoices button:active { transform: scale(.95); }
+.stchoices button .ic { width: 24px; height: 24px; color: var(--pri); }
+.stcomposer { width: 100%; display: flex; flex-direction: column; gap: 10px; animation: shila-soft .2s ease-out both; }
+.stcomposer .stprev { min-height: 120px; }
+.stwriter:not([hidden]) { width: 100%; }
+.sthub > .sec { margin-top: 18px; }
+.stgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 14px 8px; padding-bottom: 6px; }
+.stgrid .empty { grid-column: 1 / -1; }
+.sttile {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0;
+  background: none; border: 0; color: var(--ink); cursor: pointer; font-size: 11.5px;
+}
+.string {
+  width: 82px; height: 82px; border-radius: 50%; padding: 3px; display: grid; place-items: center;
+  background: conic-gradient(from 0deg, var(--pri), var(--acc), var(--pri));
+  box-shadow: 0 4px 14px rgba(15, 23, 42, .14); transition: transform .18s;
+}
+.sttile:active .string { transform: scale(.94); }
+.string > .stb {
+  width: 100%; height: 100%; display: grid; place-items: center; overflow: hidden; border-radius: 50%;
+  background: var(--bg2); font-size: 34px; font-style: normal;
+}
+.string > .stb img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.sttile b { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stimetxt { font-size: 10px; color: var(--mut); }
