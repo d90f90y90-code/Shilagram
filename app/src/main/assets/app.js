@@ -63,12 +63,33 @@
   document.addEventListener('contextmenu', e => { if (!/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) e.preventDefault(); });
 
   // ---------- ShilaBot ----------
-  const BOT_DEF = { on: false, name: 'شيلا بوت', bio: '', prompt: '', key: '', model: 'gemini-2.5-flash', av: '', mention: false };
+  const BOT_DEF = { on: false, name: 'شيلا بوت', bio: '', prompt: '', key: '', model: 'gemini-3.8-flash', av: '', mention: false };
   let BOT = Object.assign({}, BOT_DEF, (await DB.get('bot')) || {});
+  if (BOT.key && !KEYRE.test(BOT.key)) { BOT.api = BOT.api || BOT.key; delete BOT.key; } // migrate old saved API key
+  const BOT_MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-4-hydrogen', 'gemini-2.5-flash'];
+  if (!BOT_MODELS.includes(BOT.model) || /^gemini-2\.5|^gemini-3\.5-flash$/.test(BOT.model)) BOT.model = BOT_DEF.model; // new keys cannot use 2.5
+  BOT.key = BOT.key || botKey(); BOT.api = BOT.api || '';
   const botSave = () => DB.set('bot', BOT), botBusy = {};
   const botClean = x => String(x || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 4000);
+  function botKey() { let k = ''; for (let i = 0; i < 6; i++) k += String.fromCharCode(65 + R(26)); for (let i = 0; i < 4; i++) k += R(10); return k; }
+  async function botIdentity() {
+    let id = await DB.get('botid');
+    if (!id || !id.pub || !id.priv) { id = await C.newIdentity(); await DB.set('botid', id); }
+    id.pub = U8(id.pub); return id;
+  }
+  const botStatus = s => {
+    const el = $('#botstat'); if (!el) return;
+    el.textContent = s === 'on' ? t('botStatusOn') : s === 'off' ? t('botStatusOff') : s === 'retry' ? t('botStatusRetry') : s === 'keybusy' ? t('botStatusBusy') : t('botStatusErr');
+    el.className = 'hint' + (s === 'on' ? ' ok' : s === 'off' ? '' : ' er');
+  };
+  async function botStart() {
+    if (!BOT.on || !BOT.key || !window.ShilaBot || !window.Peer) return;
+    try { window.ShilaBot.startPeer(Object.assign({ id: await botIdentity(), fc: '#8b5cf6' }, BOT), window.Peer, iceServers(), botStatus); }
+    catch (e) { botStatus('error'); }
+  }
+  function botStop() { try { window.ShilaBot.stopPeer(); } catch (e) {} }
   async function botReply(id, from, text) {
-    if (!BOT.on || !BOT.key || botBusy[id] || !text || from === ME.key) return;
+    if (!BOT.on || !BOT.api || botBusy[id] || !text || from === ME.key) return;
     if (isG(id) && BOT.mention && !(new RegExp('@?' + BOT.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')).test(text)) return;
     botBusy[id] = 1;
     try {
@@ -89,13 +110,28 @@
     if (!cfg.key) return $('#boterr').textContent = t('botNeedKey');
     $('#boterr').textContent = t('botTesting');
     try { await window.ShilaBot.ask(cfg, [], t('botTest')); $('#boterr').textContent = t('botOk'); }
-    catch (e) { $('#boterr').textContent = t('botFail') + (e && e.message ? e.message.slice(0, 120) : '?'); }
+    catch (e) { $('#boterr').textContent = t('botFail') + (e && e.message ? e.message.slice(0, 220) : '?'); }
+  };
+  $('#botkeycopy').onclick = () => copyText(BOT.key);
+  $('#botqrbtn').onclick = () => {
+    const box = $('#botqr'); box.hidden = !box.hidden;
+    if (box.hidden) return;
+    box.innerHTML = '';
+    const payload = 'shilagram://add?k=' + BOT.key;
+    try { if (window.QRCode) new QRCode(box, { text: payload, width: 180, height: 180, colorDark: '#0f172a', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M }); else box.textContent = payload; }
+    catch (e) { box.textContent = payload; }
+  };
+  $('#botaddme').onclick = () => {
+    const k = BOT.key; if (!k || S.c[k]) return;
+    S.out[k] = { name: BOT.name, un: '', ts: Date.now() }; save(); if (!on(k)) connect(k); toast(t('botAdded'));
   };
   $('#botsave').onclick = async () => {
     BOT.name = noCtl($('#botname').value, 30) || BOT_DEF.name; BOT.bio = noCtl($('#botbio').value, 140);
-    BOT.prompt = noCtl($('#botprompt').value, 8000); BOT.key = $('#botkey').value.trim(); BOT.model = $('#botmodel').value;
+    BOT.prompt = noCtl($('#botprompt').value, 8000); BOT.api = $('#botkey').value.trim(); BOT.model = $('#botmodel').value;
     BOT.on = !!$('#boton').checked; BOT.mention = !!$('#botmention').checked;
-    await botSave(); toast(t('botSaved')); closePage();
+    await botSave();
+    if (BOT.on) await botStart(); else botStop();
+    toast(t('botSaved')); closePage();
   };
 
   // ---------- messages ----------
@@ -447,8 +483,9 @@
   const pgStack = [], PG_ON = {};
   PG_ON.bot = () => {
     $('#botname').value = BOT.name; $('#botbio').value = BOT.bio; $('#botprompt').value = BOT.prompt;
-    $('#botkey').value = BOT.key; $('#botmodel').value = BOT.model; $('#boton').checked = !!BOT.on; $('#botmention').checked = !!BOT.mention;
-    bigAv($('#botav'), BOT.av, '#8b5cf6'); $('#boterr').textContent = '';
+    $('#botkey').value = BOT.api || ''; $('#botmodel').value = BOT.model; $('#boton').checked = !!BOT.on; $('#botmention').checked = !!BOT.mention;
+    $('#botkid').textContent = BOT.key || '—'; bigAv($('#botav'), BOT.av, '#8b5cf6'); $('#boterr').textContent = '';
+    $('#botqr').hidden = true; botStatus(window.ShilaBot && window.ShilaBot.isRunning() ? 'on' : 'off');
   };
   function showPage(n) { const el = $('#pg-' + n); if (!el || pgStack[pgStack.length - 1] === n) return; pgStack.push(n); el.style.zIndex = 10 + pgStack.length; el.classList.add('on'); if (PG_ON[n]) PG_ON[n](); updateTabbar(); }
   function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'gmedia' || n === 'shf') dlClear(); if (n === 'shfc' && pgStack[pgStack.length - 1] === 'shf') renderShf(); updateTabbar(); }
@@ -1804,7 +1841,7 @@
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
   if (window.__DEBUG) window.__app = { ME, fillView, openStatus, statusTick, receiveProfile, S, conns, rot, seen, on, checkRotation, dirLookup, open, list, sendMsg, sweep, react, togglePin, getM, handlePlain, sendCtlQ, tsvLoop, askPassword, saveTsv, get TSV() { return TSV; }, get M() { return M; }, get typing() { return typing; }, get dirPeer() { return dirPeer; }, get call() { return call; } };
-  await loadBg(); applySettings(); drawMine(); applyLang(); updateTabbar(); if (PIN) unlockLoop(); start(); sweep(); statusTick(); if (!ME.user) setTimeout(askUser, 500);
+  await loadBg(); applySettings(); drawMine(); applyLang(); updateTabbar(); if (PIN) unlockLoop(); start(); sweep(); statusTick(); if (BOT.on) botStart(); if (!ME.user) setTimeout(askUser, 500);
   if (NATIVE && S.set.autoUpd && Date.now() - (S.updAt || 0) > 12 * 3600e3) setTimeout(async () => { S.updAt = Date.now(); save(); if (await checkUpdate(true)) toast(t('updBanner')); }, 8000);
   if (NATIVE && NATIVE.ready) try { NATIVE.ready(); } catch (e) {}
 })();

@@ -766,3 +766,6 @@ header small { font-size: 11.5px; opacity: .8; }
 .botwarn p { margin: 0; }
 .botopts { flex-direction: row; flex-wrap: wrap; }
 .botn { display: block; font-size: 11px; color: var(--pri); opacity: .85; margin-bottom: 2px; }
+#botqr { display: flex; justify-content: center; padding: 12px; margin-top: 10px; background: #fff; border-radius: 12px; overflow: hidden; }
+#botqr table, #botqr canvas { max-width: 100%; }
+.hint.ok { color: #16a34a; }
