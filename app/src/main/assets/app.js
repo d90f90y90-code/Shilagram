@@ -33,7 +33,7 @@
   save();
 
   const VP = { el: null, mid: null }; // the voice message that is playing
-  let rot = {}, seen = {}, act = {}, bootT = Date.now(), M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null, tsvRes = null, pwRes = null, fwMsg = null, pinCur = 0, typSent = {}, typing = {}, updInfo = null, lastDrawKey = {};
+  let rot = {}, seen = {}, act = {}, bootT = Date.now(), M = {}, conns = {}, cur = null, peer = null, srch = null, urls = [], replyTo = null, ST = [], sk = {}, rec = null, call = null, pendingCall = null, actM = null, cropRes = null, tsvRes = null, pwRes = null, fwMsg = null, pinCur = 0, typSent = {}, typing = {}, botThinking = {}, updInfo = null, lastDrawKey = {};
   const ch = id => S.c[id] || S.g[id], isG = id => !!S.g[id], on = k => !!(conns[k] && conns[k].auth);
   const members = id => isG(id) ? Object.keys(S.g[id].mem).filter(k => k !== ME.key) : [id];
   const nmOf = (id, f) => f === ME.key ? ME.name : (S.c[f] && S.c[f].name) || (S.g[id] && S.g[id].mem[f]) || f;
@@ -283,7 +283,9 @@
     else if (h.t === 'pf') receiveProfile(k, h);
     else if (h.t === 'typ') {
       const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k])) return;
-      F.typingMark(typing[id] || (typing[id] = {}), k, Date.now()); list(); if (cur === id) drawHead();
+      if (h.bot) botThinking[k] = Date.now() + F.TYPING_MS + 1500;
+      else F.typingMark(typing[id] || (typing[id] = {}), k, Date.now());
+      list(); if (cur === id) drawHead();
       setTimeout(() => { list(); if (cur === id) drawHead(); }, F.TYPING_MS + 100);
     }
     else if (h.t === 'rx') {
@@ -317,6 +319,7 @@
         if (h.fw) m.fw = F.fwName(h.fw);
         const ttl = F.validTtl(h.ex); if (ttl) { m.ttl = ttl; S.exp[rid_] = F.expiresAt(ttl, Date.now()); save(); }
         if (typing[id]) delete typing[id][k];
+        delete botThinking[k];
         if (cur !== id) o.u = (o.u || 0) + 1;
         await addMsg(id, m);
         shAuto(m, id);
@@ -374,7 +377,8 @@
       avStyle(r.children[0], o.av, g ? '👥' : (o.name || '?')[0]); setName(r.querySelector('b'), o.name, !g && o.st);
       const pv = o.lk === 'st' ? t('sticker') : o.lk === 'img' ? t('photo') : o.lk === 'vo' ? t('voice') : (o.lx || '');
       const tkl = F.typingNow(typing[id], Date.now()), sub = r.querySelector('span');
-      if (tkl.length) { sub.textContent = t('typing'); sub.append(typingDots()); }
+      if (botThinking[id] > Date.now()) { sub.textContent = t('botThinking'); sub.append(typingDots()); }
+      else if (tkl.length) { sub.textContent = t('typing'); sub.append(typingDots()); }
       else sub.textContent = pv || (g ? Object.keys(o.mem).length + t('members') : on(id) ? t('online') : t('offline'));
       r.querySelector('.meta div').textContent = o.last ? tm(o.last) : '';
       if (o.u) { const b = document.createElement('span'); b.className = 'bd'; b.textContent = o.u; r.lastChild.append(b); }
@@ -392,7 +396,8 @@
     const o = ch(cur); if (!o) return;
     setName($('#cn'), o.name, !isG(cur) && o.st); avStyle($('#ca'), o.av, isG(cur) ? '👥' : (o.name || '?')[0]);
     const tk = F.typingNow(typing[cur], Date.now()), cs = $('#cs');
-    if (tk.length) { cs.textContent = isG(cur) ? tk.map(k => nmOf(cur, k)).join('، ') + ' ' + (tk.length > 1 ? t('typingMany') : t('typing')) : t('typing'); cs.append(typingDots()); }
+    if (botThinking[cur] > Date.now()) { cs.textContent = t('botThinking'); cs.append(typingDots()); }
+    else if (tk.length) { cs.textContent = isG(cur) ? tk.map(k => nmOf(cur, k)).join('، ') + ' ' + (tk.length > 1 ? t('typingMany') : t('typing')) : t('typing'); cs.append(typingDots()); }
     else cs.textContent = isG(cur) ? Object.keys(o.mem).map(k => nmOf(cur, k)).join('، ') : on(cur) ? t('online') + ' · ' + t('secure') : t('offline');
   }
   function drawPin() {

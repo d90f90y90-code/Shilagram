@@ -98,11 +98,14 @@
     const text = String(h.x || '').slice(0, 4000); if (!text) return;
     const hist = (chats[k] || []).slice(-8);
     chats[k] = hist.concat([{ x: text, me: false }]).slice(-8);
+    await send(c, { t: 'typ', bot: 1 }); // "thinking…" on the other side
+    const pulse = setInterval(() => send(c, { t: 'typ', bot: 1 }), 3000);
     try {
       const ans = await ask(cfg, hist, text);
       chats[k] = chats[k].concat([{ x: ans, me: true }]).slice(-8);
       await send(c, { t: 'm', i: rid(12), ts: Date.now(), kind: 't', x: ans, bn: cfg.name });
     } catch (e) { /* never break the chat because of an API error */ }
+    finally { clearInterval(pulse); }
   }
   async function onData(c, d) {
     if (!d || typeof d !== 'object') return;
