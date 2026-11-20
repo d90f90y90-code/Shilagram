@@ -28,6 +28,7 @@
   ID.pub = U8(ID.pub);
   let PIN = await DB.get('pin'), TSV = await DB.get('tsv'), TL = (await DB.get('tsvl')) || { f: 0, u: 0 };
   const F = ShilaFeatures; S.exp = S.exp || {}; S.cq = S.cq || {};
+  let SCHED = (await DB.get('sched')) || []; const schedSave = () => DB.set('sched', SCHED);
   let _st; const save = () => { clearTimeout(_st); _st = setTimeout(() => DB.set('state', S), 250); };
   document.addEventListener('visibilitychange', () => { if (document.hidden) { DB.set('state', S); window.__hiddenAt = Date.now(); } else { if (PIN && window.__hiddenAt && S.set.lockAfter >= 0 && Date.now() - window.__hiddenAt >= S.set.lockAfter * 1000) unlockLoop(); poll(); if (peer && peer.disconnected) try { peer.reconnect(); } catch (e) {} } });
   save();
@@ -43,7 +44,8 @@
   const banner = x => { $('#bn').style.display = x ? 'block' : 'none'; $('#bn').textContent = x || ''; };
   const warn = x => { $('#warn').style.display = x ? 'block' : 'none'; $('#warn').textContent = x || ''; };
   const dialog = (msg, def) => prompt(msg, def || '');
-  const pvText = m => m.del ? t('deleted') : m.kind === 'st' ? t('sticker') : m.kind === 'img' ? t('photo') : m.kind === 'vo' ? t('voice') : m.kind === 'file' ? t('file') + ' ' + (m.name || '') : (m.x || '');
+  const parsePoll = m => { if (m.poll) return m.poll; try { const p = JSON.parse(m.x || ''); if (p && typeof p.q === 'string' && Array.isArray(p.o)) return p; } catch (e) {} return null; };
+  const pvText = m => m.del ? t('deleted') : m.kind === 'poll' ? '📊 ' + ((parsePoll(m) || {}).q || '') : m.kind === 'st' ? t('sticker') : m.kind === 'img' ? t('photo') : m.kind === 'vo' ? t('voice') : m.kind === 'file' ? t('file') + ' ' + (m.name || '') : (m.x || '');
   const blobB64 = b => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result.split(',')[1]); f.readAsDataURL(b); });
   const b64Blob = (s, mime) => new Blob([C.unb64(s)], { type: mime || 'application/octet-stream' });
 
@@ -63,7 +65,7 @@
   document.addEventListener('contextmenu', e => { if (!/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) e.preventDefault(); });
 
   // ---------- ShilaBot ----------
-  const BOT_DEF = { on: false, name: 'شيلا بوت', bio: '', prompt: '', key: '', model: 'gemini-3.8-flash', av: '', mention: false };
+  const BOT_DEF = { on: false, name: 'شيلا بوت', bio: '', prompt: '', key: '', model: 'gemini-3.8-flash', av: '', mention: false, group: false, welcome: false, summary: false };
   let BOT = Object.assign({}, BOT_DEF, (await DB.get('bot')) || {});
   if (BOT.key && !KEYRE.test(BOT.key)) { BOT.api = BOT.api || BOT.key; delete BOT.key; } // migrate old saved API key
   const BOT_MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-4-hydrogen', 'gemini-2.5-flash'];
@@ -129,6 +131,7 @@
     BOT.name = noCtl($('#botname').value, 30) || BOT_DEF.name; BOT.bio = noCtl($('#botbio').value, 140);
     BOT.prompt = noCtl($('#botprompt').value, 8000); BOT.api = $('#botkey').value.trim(); BOT.model = $('#botmodel').value;
     BOT.on = !!$('#boton').checked; BOT.mention = !!$('#botmention').checked;
+    BOT.group = !!$('#botgroup').checked; BOT.welcome = !!$('#botwelcome').checked; BOT.summary = !!$('#botsummary').checked;
     await botSave();
     if (BOT.on) await botStart(); else botStop();
     toast(t('botSaved')); closePage();
@@ -258,7 +261,7 @@
     if (h.t === 'fr') return receiveRequest(c, h);
     if (h.t === 'fa') return receiveAccept(c);
     if (h.t === 'fd') return receiveDecline(k);
-    if (!S.c[k] && !['gs', 'gop', 'm', 'a', 'd', 'ed', 'gci', 'gcj', 'gar', 'gad', 'shr', 'rx', 'pin', 'typ'].includes(h.t)) return; // non-friends may only take part in shared groups
+    if (!S.c[k] && !['gs', 'gop', 'm', 'a', 'd', 'ed', 'gci', 'gcj', 'gar', 'gad', 'shr', 'rx', 'vote', 'pin', 'typ'].includes(h.t)) return; // non-friends may only take part in shared groups
     if (h.t === 'gs') await receiveState(c, h);
     else if (h.t === 'gop') {
       const g = S.g[h.g]; if (!g || g.owner !== ME.key || !h.op) return; const op = Object.assign({}, h.op); delete op.d;
@@ -283,7 +286,7 @@
     else if (h.t === 'pf') receiveProfile(k, h);
     else if (h.t === 'typ') {
       const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k])) return;
-      if (h.bot) botThinking[k] = Date.now() + F.TYPING_MS + 1500;
+      if (h.bot) botThinking[id] = Date.now() + F.TYPING_MS + 1500;
       else F.typingMark(typing[id] || (typing[id] = {}), k, Date.now());
       list(); if (cur === id) drawHead();
       setTimeout(() => { list(); if (cur === id) drawHead(); }, F.TYPING_MS + 100);
@@ -292,6 +295,13 @@
       const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k])) return;
       const m = await DB.getMsg(String(h.i).slice(0, 20) + ':' + id); if (!m || m.del) return;
       m.rx = F.applyReaction(m.rx, k, h.e); await DB.putMsg(m); const mm = getM(id, m.mid); if (mm) mm.rx = m.rx; if (cur === id) draw();
+    }
+    else if (h.t === 'vote') {
+      const id = h.g || k, m = await DB.getMsg(String(h.i).slice(0, 20) + ':' + id);
+      if (!m || m.kind !== 'poll' || m.del) return;
+      const v = Number(h.v); if (!Number.isInteger(v) || v < 0) return;
+      m.votes = m.votes || {}; m.votes[k] = v; await DB.putMsg(m);
+      const mm = getM(id, m.mid); if (mm) mm.votes = m.votes; if (cur === id) draw();
     }
     else if (h.t === 'pin') {
       const id = h.g || k, o = ch(id); if (!o || (h.g && !o.mem[k]) || !canPin(id, k)) return;
@@ -303,9 +313,10 @@
       if (h.g && !SG.can(o, k, (h.kind === 't' || !h.kind) ? 'send' : 'media')) return;
       const mid = String(h.i).slice(0, 20), rid_ = mid + ':' + id;
       if (!(await DB.getMsg(rid_))) {
-        const kind = ['t', 'img', 'st', 'vo', 'file'].includes(h.kind) ? h.kind : 't';
+        const kind = ['t', 'img', 'st', 'vo', 'file', 'poll'].includes(h.kind) ? h.kind : 't';
         const m = { id: rid_, mid, chat: id, f: k, me: 0, ts: Math.min(Number(h.ts) || Date.now(), Date.now()), kind, p: [] };
         if (kind === 't') m.x = String(h.x || '').slice(0, 8000);
+        if (kind === 'poll') { m.x = String(h.x || '').slice(0, 4000); m.poll = parsePoll(m); if (!m.poll) return; }
         if (h.bn) m.bn = String(h.bn).slice(0, 30);
         else {
           if (!bin || !bin.length || bin.length > MAXB + 1024) return;
@@ -319,12 +330,13 @@
         if (h.fw) m.fw = F.fwName(h.fw);
         const ttl = F.validTtl(h.ex); if (ttl) { m.ttl = ttl; S.exp[rid_] = F.expiresAt(ttl, Date.now()); save(); }
         if (typing[id]) delete typing[id][k];
-        delete botThinking[k];
+        delete botThinking[id];
         if (cur !== id) o.u = (o.u || 0) + 1;
         await addMsg(id, m);
         shAuto(m, id);
         notify(t('msgFrom') + nmOf(id, k), pvText(m), id);
-        if (BOT.on && kind === 't' && !m.bn) botReply(id, k, m.x);
+        // The independent bot peer replies itself — never answer twice, and never let every member's device answer in groups.
+        if (BOT.on && kind === 't' && !m.bn && !isG(id) && !(window.ShilaBot && window.ShilaBot.isRunning())) botReply(id, k, m.x);
       }
       sealTo(c, { t: 'a', i: mid, g: h.g });
     } else if (h.t === 'a') {
@@ -363,7 +375,7 @@
     if (peer && !peer.disconnected) { poll(); checkRotation(); }
   }, 20000);
   setInterval(() => ensureDir(), 8000);
-  setInterval(sweep, 1000); setInterval(statusTick, 5000);
+  setInterval(sweep, 1000); setInterval(statusTick, 5000); setInterval(schedTick, 10000);
 
   // ---------- list & chat UI ----------
   function list() {
@@ -417,6 +429,10 @@
   async function react(m, e) {
     const ne = (m.rx || {})[ME.key] === e ? '' : e; m.rx = F.applyReaction(m.rx, ME.key, ne); await DB.putMsg(m); draw(); sendCtlQ(cur, { t: 'rx', i: m.mid, e: ne });
   }
+  async function vote(m, v) {
+    const p = parsePoll(m); if (!p || (m.votes || {})[ME.key] !== undefined || (p.end && Date.now() > p.end)) return;
+    m.votes = m.votes || {}; m.votes[ME.key] = v; await DB.putMsg(m); draw(); sendCtlQ(cur, { t: 'vote', i: m.mid, v });
+  }
   function draw(stick) {
     const o = ch(cur); if (!o) return; const live = VP.el && !VP.el.paused ? VP.el.src : null; urls.forEach(u => u !== live && URL.revokeObjectURL(u)); urls = live ? [live] : [];
     const Mm = $('#ms'), nearEnd = Mm.scrollHeight - Mm.scrollTop - Mm.clientHeight < 120; Mm.innerHTML = '';
@@ -434,6 +450,23 @@
       else if (m.kind === 'img' && m.b) { const im = document.createElement('img'); im.className = 'ph'; im.src = url(m.b); im.onclick = () => openChatPhoto(m); b.append(im); }
       else if (m.kind === 'vo' && m.b) { const a = VP.el && VP.mid === m.mid && !VP.el.paused ? VP.el : Object.assign(document.createElement('audio'), { controls: true, preload: 'metadata', src: url(m.b) }); a.dataset.mid = m.mid; b.append(a); }
       else if (m.kind === 'file' && m.b) { const f = document.createElement('div'); f.className = 'fl'; f.innerHTML = '<span>📎</span><u></u>'; f.lastChild.textContent = (m.name || 'file') + ' (' + Math.ceil(m.b.size / 1024) + ' KB)'; f.onclick = () => saveBlob(m); b.append(f); }
+      else if (m.kind === 'poll') {
+        const p = parsePoll(m), box = document.createElement('div'); box.className = 'poll';
+        const q = document.createElement('b'); q.textContent = '📊 ' + p.q; box.append(q);
+        const votes = m.votes || {}, mine = votes[ME.key], total = Object.keys(votes).length, closed = p.end && Date.now() > p.end;
+        p.o.forEach((o, idx) => {
+          const bt = document.createElement('button'); bt.className = 'po' + (mine === idx ? ' mine' : '');
+          if (mine !== undefined || closed) {
+            const n = Object.values(votes).filter(v => v === idx).length, pct = total ? Math.round(n / total * 100) : 0;
+            bt.innerHTML = '<span></span><em></em><u></u>';
+            bt.children[0].textContent = o; bt.children[1].style.width = pct + '%'; bt.children[2].textContent = pct + '%';
+          } else bt.textContent = o;
+          bt.disabled = mine !== undefined || !!closed; bt.onclick = ev => { ev.stopPropagation(); vote(m, idx); };
+          box.append(bt);
+        });
+        const foot = document.createElement('small'); foot.textContent = total + ' ' + t('pollVote') + (closed ? ' · ' + t('pollEnded') : ''); box.append(foot);
+        b.append(box);
+      }
       else if (m.kind !== 't' && !m.b) { const s = document.createElement('span'); s.textContent = t('mediaGone'); s.style.opacity = '.6'; b.append(s); }
       else { const s = document.createElement('span'); s.textContent = m.x || ''; b.append(s); }
       if (!m.del && m.rx && Object.keys(m.rx).length) { const rr = document.createElement('div'); rr.className = 'rxs'; F.reactionSummary(m.rx, ME.key).forEach(c => { const bt = document.createElement('button'); bt.textContent = c.e + (c.n > 1 ? ' ' + c.n : ''); bt.classList.toggle('mine', c.mine); bt.onclick = ev => { ev.stopPropagation(); react(m, c.e); }; rr.append(bt); }); b.append(rr); }
@@ -489,6 +522,7 @@
   PG_ON.bot = () => {
     $('#botname').value = BOT.name; $('#botbio').value = BOT.bio; $('#botprompt').value = BOT.prompt;
     $('#botkey').value = BOT.api || ''; $('#botmodel').value = BOT.model; $('#boton').checked = !!BOT.on; $('#botmention').checked = !!BOT.mention;
+    $('#botgroup').checked = !!BOT.group; $('#botwelcome').checked = !!BOT.welcome; $('#botsummary').checked = !!BOT.summary;
     $('#botkid').textContent = BOT.key || '—'; bigAv($('#botav'), BOT.av, '#8b5cf6'); $('#boterr').textContent = '';
     $('#botqr').hidden = true; botStatus(window.ShilaBot && window.ShilaBot.isRunning() ? 'on' : 'off');
   };
@@ -1137,10 +1171,14 @@
     sheet('act');
   }
   $('#tbinv').onclick = () => {
-    const g = S.g[cur], L = $('#gal'); L.innerHTML = ''; const cand = Object.entries(S.c).filter(([k]) => !g.mem[k]); if (!cand.length) L.innerHTML = '<p>' + t('noMembersToAdd') + '</p>';
-    cand.forEach(([k, o]) => { const d = document.createElement('label'); d.className = 'chk'; d.innerHTML = '<input type="checkbox" value="' + k + '"><span></span>'; d.lastChild.textContent = o.name; L.append(d); }); sheet('ga');
+    const g = S.g[cur], L = $('#gal'); L.innerHTML = ''; const cand = Object.entries(S.c).filter(([k]) => !g.mem[k]);
+    const botCand = BOT.on && BOT.key && !g.mem[BOT.key];
+    if (!cand.length && !botCand) L.innerHTML = '<p>' + t('noMembersToAdd') + '</p>';
+    cand.forEach(([k, o]) => { const d = document.createElement('label'); d.className = 'chk'; d.innerHTML = '<input type="checkbox" value="' + k + '"><span></span>'; d.lastChild.textContent = o.name; L.append(d); });
+    if (botCand) { const d = document.createElement('label'); d.className = 'chk'; d.innerHTML = '<input type="checkbox" value="' + BOT.key + '"><span></span>'; d.lastChild.textContent = '🤖 ' + BOT.name; L.append(d); }
+    sheet('ga');
   };
-  $('#gac').onclick = async () => { const ks = [...$$('#gal input:checked')].map(i => i.value); for (const k of ks) await groupAct(cur, { a: 'add', k, n: S.c[k].name }); sheet(0); fillGroup(); };
+  $('#gac').onclick = async () => { const ks = [...$$('#gal input:checked')].map(i => i.value); for (const k of ks) await groupAct(cur, { a: 'add', k, n: (S.c[k] && S.c[k].name) || (k === BOT.key ? BOT.name : k) }); sheet(0); fillGroup(); };
   $('#tbst').onclick = () => showPage('gst'); $('#tbme').onclick = () => showPage('gmedia'); $('#tbad').onclick = openAdmins; $('#tbset').onclick = groupSettings;
   $('#tbse').onclick = () => { $('#gsq').value = ''; $('#gsr').innerHTML = ''; $('#gsq').placeholder = t('gSearchPh'); showPage('gsearch'); setTimeout(() => $('#gsq').focus(), 320); };
   function jumpTo(mid) { setTimeout(() => { const b = document.querySelector('#ms .b[data-mid="' + mid + '"]'); if (b) { b.scrollIntoView({ block: 'center' }); b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 1700); } }, 380); }
@@ -1197,6 +1235,44 @@
   };
   $('#ba').onclick = () => sheet('att');
   $('#aimg').onclick = () => $('#fimg').click(); $('#afil').onclick = () => $('#ffil').click();
+  const pollRow = () => { const r = document.createElement('input'); r.className = 'pwi pollopt'; r.maxLength = 80; r.placeholder = t('pollOpt') + ' ' + ($('#pollopts').children.length + 1); return r; };
+  $('#apoll').onclick = () => {
+    if (!isG(cur)) return alert(t('pollOnlyGroups'));
+    $('#pollq').value = ''; $('#pollopts').innerHTML = ''; $('#pollopts').append(pollRow(), pollRow()); sheet('poll');
+  };
+  $('#polladd').onclick = () => { if ($('#pollopts').children.length < 5) $('#pollopts').append(pollRow()); };
+  $('#pollsend').onclick = () => {
+    const q = $('#pollq').value.trim(), opts = [...$('#pollopts').children].map(i => i.value.trim()).filter(Boolean);
+    if (!q || opts.length < 2) return alert(t('pollBad'));
+    sendMsg({ kind: 'poll', x: JSON.stringify({ q, o: opts.slice(0, 5), end: Date.now() + 24 * 3600e3 }) });
+    $('#pollq').value = ''; $('#pollopts').innerHTML = ''; sheet(0);
+  };
+  $('#asched').onclick = () => { $('#schedtxt').value = $('#t').value.trim(); $('#schedwhen').value = ''; sheet('sched'); };
+  $('#schedadd').onclick = async () => {
+    const x = $('#schedtxt').value.trim(), at = new Date($('#schedwhen').value).getTime();
+    if (!x || !at || at <= Date.now()) return alert(t('schedBad'));
+    SCHED.push({ id: rid(10), chat: cur, x, at }); await schedSave();
+    $('#schedtxt').value = ''; sheet(0); toast(t('scheduleAdd')); if ($('#pg-sched').classList.contains('on')) renderSched();
+  };
+  function renderSched() {
+    const L = $('#schedlist'); L.innerHTML = '';
+    if (!SCHED.length) { L.innerHTML = '<div class="empty">' + t('scheduleEmpty') + '</div>'; return; }
+    SCHED.slice().sort((a, b) => a.at - b.at).forEach(s => {
+      const r = document.createElement('div'); r.className = 'row schedrow';
+      r.innerHTML = '<div class="mid"><b></b><span></span></div><button class="ib"></button>';
+      r.querySelector('b').textContent = (ch(s.chat) && ch(s.chat).name) || s.chat;
+      r.querySelector('span').textContent = new Date(s.at).toLocaleString() + ' · ' + s.x.slice(0, 60);
+      r.querySelector('button').textContent = '✕'; r.querySelector('button').onclick = async () => { SCHED = SCHED.filter(q => q.id !== s.id); await schedSave(); renderSched(); };
+      L.append(r);
+    });
+  }
+  PG_ON.sched = renderSched;
+  async function schedTick() {
+    if (!SCHED.length) return;
+    const due = SCHED.filter(s => s.at <= Date.now()); if (!due.length) return;
+    for (const s of due) { SCHED = SCHED.filter(q => q.id !== s.id); if (!ch(s.chat)) continue; try { await sendMsg({ kind: 't', x: s.x }, s.chat); } catch (e) {} }
+    await schedSave(); toast(t('schedSent')); if ($('#pg-sched').classList.contains('on')) renderSched(); list();
+  }
   async function shrink(file, max = 1280) {
     const bm = await createImageBitmap(file), s = Math.min(1, max / Math.max(bm.width, bm.height)), cv = document.createElement('canvas');
     cv.width = Math.round(bm.width * s); cv.height = Math.round(bm.height * s); cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
@@ -1853,10 +1929,11 @@
     $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t)); document.documentElement.style.setProperty('--sd', I18N.lang === 'ar' ? 1 : -1);
     if ($('#qrbox') && !$('#qrbox').hidden) $('#paqrtxt').textContent = t('hideQR');
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh'); $('#gq').placeholder = t('searchPh');
+    $('#pollq').placeholder = t('pollQ'); $('#schedtxt').placeholder = t('scheduleText');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
   if (window.__DEBUG) window.__app = { ME, fillView, openStatus, statusTick, receiveProfile, S, conns, rot, seen, on, checkRotation, dirLookup, open, list, sendMsg, sweep, react, togglePin, getM, handlePlain, sendCtlQ, tsvLoop, askPassword, saveTsv, get TSV() { return TSV; }, get M() { return M; }, get typing() { return typing; }, get dirPeer() { return dirPeer; }, get call() { return call; } };
-  await loadBg(); applySettings(); drawMine(); applyLang(); updateTabbar(); if (PIN) unlockLoop(); start(); sweep(); statusTick(); if (BOT.on) botStart(); if (!ME.user) setTimeout(askUser, 500);
+  await loadBg(); applySettings(); drawMine(); applyLang(); updateTabbar(); if (PIN) unlockLoop(); start(); sweep(); statusTick(); schedTick(); if (BOT.on) botStart(); if (!ME.user) setTimeout(askUser, 500);
   if (NATIVE && S.set.autoUpd && Date.now() - (S.updAt || 0) > 12 * 3600e3) setTimeout(async () => { S.updAt = Date.now(); save(); if (await checkUpdate(true)) toast(t('updBanner')); }, 8000);
   if (NATIVE && NATIVE.ready) try { NATIVE.ready(); } catch (e) {}
 })();

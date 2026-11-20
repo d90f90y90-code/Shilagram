@@ -56,7 +56,7 @@
   // ---------- independent bot peer ----------
   let peer = null, cfg = null, PeerC = null, ice = null, onStatus = null;
   let running = false, retry = 0, retryT = 0;
-  const conns = {}, chats = {};
+  const conns = {}, chats = {}, groups = {}, gchats = {};
 
   const status = s => { try { if (onStatus) onStatus(s); } catch (e) {} };
   const send = (c, h) => C.seal(c.aes, h).then(f => { try { c.send(f); return true; } catch (e) { return false; } });
@@ -85,25 +85,70 @@
     c.auth = 1; c.key = c.peerKey; conns[c.key] = c;
     await send(c, ownProfile());
   }
+  const groupConns = id => {
+    const g = groups[id]; if (!g || !g.st.mem[cfg.key]) return [];
+    return Object.keys(g.st.mem).filter(k => k !== cfg.key && conns[k] && conns[k].auth);
+  };
+  function sendGroup(id, text) {
+    const cs = groupConns(id); if (!cs.length) return;
+    const h = { t: 'm', g: id, i: rid(12), ts: Date.now(), kind: 't', x: String(text).slice(0, 4000), bn: cfg.name };
+    cs.forEach(k => send(conns[k], h));
+  }
+  async function onState(c, h) {
+    if (typeof h.raw !== 'string' || h.raw.length > 70000 || typeof h.sig !== 'string') return;
+    let st; try { st = G.ShilaGroups.validState(JSON.parse(h.raw)); } catch (e) { return; }
+    if (!st) return;
+    const old = groups[st.id];
+    if (old && c.key !== old.st.owner) return;
+    let key; try { key = C.unb64(st.opk); } catch (e) { return; }
+    const sig = C.unb64(h.sig);
+    if (!(await C.verifyRaw(key, sig, new TextEncoder().encode(h.raw)))) return;
+    if (!st.mem[cfg.key]) { if (old) delete groups[st.id]; return; } // removed from the group
+    if (old && old.st.ver >= st.ver) return;
+    groups[st.id] = { st, raw: h.raw, sig: h.sig };
+  }
+  function onGop(c, h) {
+    const g = groups[h.g]; if (!g || !h.op || c.key !== g.st.owner) return;
+    const ns = G.ShilaGroups.applyOp(g.st, c.key, h.op); if (!ns) return;
+    g.st = ns;
+    if (h.op.a === 'add' && h.op.k && h.op.k !== cfg.key && cfg.welcome) sendGroup(h.g, '👋 ' + (ns.mem[h.op.k] || h.op.k) + ' — ' + cfg.name);
+  }
   async function onPlain(c, h) {
     const k = c.key;
+    if (h.t === 'gs') return onState(c, h);
+    if (h.t === 'gop') return onGop(c, h);
+    if (h.t === 'vote') return;
     if (h.t === 'pg' || h.t === 'typ' || h.t === 'pf') { if (h.t === 'pf' && h.n) c.peerName = String(h.n).slice(0, 30); return; }
     if (h.t === 'fr') { await send(c, { t: 'fa' }); await send(c, ownProfile()); return; }
     if (h.t === 'fd') { try { c.close(); } catch (e) {} return; }
     if (h.t !== 'm') return;
+    const gid = h.g || null;
+    let targets = [k], store = chats, key = k, summary = false;
+    if (gid) {
+      if (!cfg.group) return; // group participation is opt-in
+      const g = groups[gid]; if (!g || !g.st.mem[cfg.key] || !G.ShilaGroups.can(g.st, k, 'send')) return;
+      targets = groupConns(gid); if (!targets.length) return;
+      store = gchats; key = 'g:' + gid;
+      const text0 = String(h.x || ''), nameRe = new RegExp('@?' + String(cfg.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      summary = !!(cfg.summary && /(ملخص|لخص|summary)/i.test(text0));
+      if (!summary && !nameRe.test(text0) && !text0.includes(cfg.key)) return; // groups: reply only when mentioned
+    }
     const mid = String(h.i || '').slice(0, 20);
     if (!mid) return;
     await send(c, { t: 'a', i: mid }); // ack first so the sender never waits
     if (h.kind && h.kind !== 't') return;
     const text = String(h.x || '').slice(0, 4000); if (!text) return;
-    const hist = (chats[k] || []).slice(-8);
-    chats[k] = hist.concat([{ x: text, me: false }]).slice(-8);
-    await send(c, { t: 'typ', bot: 1 }); // "thinking…" on the other side
-    const pulse = setInterval(() => send(c, { t: 'typ', bot: 1 }), 3000);
+    const hist = (store[key] || []).slice(-8);
+    store[key] = hist.concat([{ x: text, me: false }]).slice(-8);
+    const typH = Object.assign({ t: 'typ', bot: 1 }, gid ? { g: gid } : {});
+    targets.forEach(tk => send(conns[tk], typH));
+    const pulse = setInterval(() => targets.forEach(tk => send(conns[tk], typH)), 3000);
     try {
-      const ans = await ask(cfg, hist, text);
-      chats[k] = chats[k].concat([{ x: ans, me: true }]).slice(-8);
-      await send(c, { t: 'm', i: rid(12), ts: Date.now(), kind: 't', x: ans, bn: cfg.name });
+      const q = summary ? 'لخص آخر الرسائل التالية باختصار:\n' + hist.map(x => x.x).join('\n') : text;
+      const ans = await ask(cfg, summary ? [] : hist, q);
+      store[key] = store[key].concat([{ x: ans, me: true }]).slice(-8);
+      const out = { t: 'm', i: rid(12), ts: Date.now(), kind: 't', x: ans, bn: cfg.name }; if (gid) out.g = gid;
+      targets.forEach(tk => send(conns[tk], out));
     } catch (e) { /* never break the chat because of an API error */ }
     finally { clearInterval(pulse); }
   }

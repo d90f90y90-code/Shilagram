@@ -769,3 +769,30 @@ header small { font-size: 11.5px; opacity: .8; }
 #botqr { display: flex; justify-content: center; padding: 12px; margin-top: 10px; background: #fff; border-radius: 12px; overflow: hidden; }
 #botqr table, #botqr canvas { max-width: 100%; }
 .hint.ok { color: #16a34a; }
+
+/* ==========================================================================
+   Group polls + scheduled messages
+   ========================================================================== */
+.poll { width: min(300px, 68vw); display: flex; flex-direction: column; gap: 7px; padding: 4px 0; }
+.poll > b { font-size: 13.5px; line-height: 1.45; }
+.poll .po {
+  position: relative; overflow: hidden; width: 100%; text-align: start;
+  padding: 9px 12px; border-radius: 12px; border: 1px solid var(--hair);
+  background: var(--bg2); color: var(--ink); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: transform .16s, border-color .16s, box-shadow .16s;
+}
+.poll .po:not(:disabled):hover { transform: translateY(-2px); border-color: var(--pri); box-shadow: 0 4px 12px rgba(0, 0, 0, .09); }
+.poll .po:disabled { cursor: default; opacity: 1; }
+.poll .po.mine { border-color: var(--pri); }
+.poll .po span, .poll .po u { position: relative; z-index: 2; }
+.poll .po u { float: inline-end; font-size: 11px; text-decoration: none; opacity: .8; }
+.poll .po em {
+  position: absolute; inset-block: 0; inset-inline-start: 0; width: 0; z-index: 1;
+  background: color-mix(in srgb, var(--pri) 22%, transparent);
+  transition: width .45s cubic-bezier(.2, .8, .2, 1);
+}
+.poll small { color: var(--mut); font-size: 10.5px; }
+.schedrow .mid b { font-size: 13px; }
+.schedrow .mid span { display: block; font-size: 11px; color: var(--mut); margin-top: 3px; white-space: normal; }
+.nomo .poll .po, .nomo .poll .po em { transition: none; }
+@media (prefers-reduced-motion: reduce) { .poll .po, .poll .po em { transition: none; } }
