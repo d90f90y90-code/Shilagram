@@ -13,7 +13,7 @@
   // ---------- state ----------
   await DB.init();
   let ME = await DB.get('me'), ID = await DB.get('identity'), S = (await DB.get('state')) || { c: {}, g: {}, ice: '', lang: '' };
-  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14, notyp: 0, autoUpd: 1, feed: { every: 30, lang: 'ar', proxy: '' } }, S.set || {}); S.set.feed = Object.assign({ every: 30, lang: 'ar', proxy: '' }, S.set.feed || {}); S.block = S.block || {}; S.recs = S.recs || []; S.calls = S.calls || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
+  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14, notyp: 0, autoUpd: 1, feed: { every: 30, lang: 'ar', proxy: '', clean: 1 } }, S.set || {}); S.set.feed = Object.assign({ every: 30, lang: 'ar', proxy: '', clean: 1 }, S.set.feed || {}); S.block = S.block || {}; S.recs = S.recs || []; S.calls = S.calls || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
   I18N.set(S.lang || I18N.detect());
   if (!ME) {
     const mig = await DB.migrateLegacy();
@@ -1987,8 +1987,11 @@
     $('#ardel').hidden = !it.local;
     body.innerHTML = ''; body.textContent = t('articleLoading') + ' '; body.append(typingDots());
     try {
-      const blocks = await ShilaFeed.article(it, S.set.feed.proxy);
-      articleItem.blocks = blocks; drawArticleBlocks(blocks);
+      const raw = await ShilaFeed.article(it, S.set.feed.proxy);
+      const clean = S.set.feed.clean !== 0 && (it.type === 'site' || it.from === 'site');
+      articleItem.raw = raw; articleItem.cleaned = clean;
+      articleItem.blocks = clean ? ShilaFeed.purify(raw) : raw;
+      drawArticleBlocks(articleItem.blocks);
       $('#artext').onclick = () => feedExternal(it.link);
     } catch (e) {
       body.innerHTML = '';
@@ -2004,6 +2007,7 @@
     const imgs = articleImgs(articleItem.blocks);
     LOCAL.unshift({ id: 'local:' + rid(8), title: articleItem.title || t('articleTitle'), link: articleItem.link || '',
       src: articleItem.src || t('feedSavedBadge'), desc: articleText(articleItem.blocks).slice(0, 1200),
+      from: articleItem.from || (articleItem.type === 'site' ? 'site' : ''),
       img: imgs[0] || articleItem.img || '', blocks: articleItem.blocks, ts: Date.now() });
     await localSave(); toast(t('articleSaved'));
   }
@@ -2028,6 +2032,13 @@
   $('#artr').onclick = () => articleAI('translate');
   $('#arts').onclick = () => articleAI('summary');
   $('#artan').onclick = () => articleAI('analyze');
+  $('#arclean').onclick = () => {
+    if (!articleItem || !articleItem.raw) return toast(t('articleNoContent'));
+    articleItem.cleaned = !articleItem.cleaned;
+    articleItem.blocks = articleItem.cleaned ? ShilaFeed.purify(articleItem.raw) : articleItem.raw;
+    drawArticleBlocks(articleItem.blocks);
+    toast(t(articleItem.cleaned ? 'cleanDone' : 'cleanOff'));
+  };
   function renderFeed() {
     const L = $('#feedlist'); if (!L) return; L.innerHTML = '';
     if (!FEEDS.length && !LOCAL.length) { L.innerHTML = '<div class="empty">' + t('feedNoSources') + '</div>'; return; }
@@ -2092,6 +2103,7 @@
     $('#feedevery').value = S.set.feed.every || 30;
     $('#feedlang').value = S.set.feed.lang || 'ar';
     $('#feedproxy').value = S.set.feed.proxy || '';
+    $('#feedclean').checked = S.set.feed.clean !== 0;
   }
   async function feedAI(kind, text, title) {
     if (!window.ShilaBot || !BOT.api) { toast(t('feedNeedKey')); showPage('bot'); return; }
@@ -2115,6 +2127,10 @@
     if (FEEDS.length && !FEEDS.some(f => (f.items || []).length)) feedRefresh(null, true);
   };
   PG_ON.feedsrc = renderSources;
+  $$('.fgrp').forEach(b => b.onclick = () => {
+    const body = $('#fg-' + b.dataset.grp), open = body.hidden;
+    body.hidden = !open; b.classList.toggle('open', open); b.setAttribute('aria-expanded', !!open);
+  });
   $('#feedq').oninput = renderFeed;
   $('#feedrefresh').onclick = () => feedRefresh();
   $('#feedmanage').onclick = () => showPage('feedsrc');
@@ -2140,6 +2156,7 @@
   $('#feedsetSave').onclick = async () => {
     S.set.feed.every = Math.max(5, Math.min(720, Number($('#feedevery').value) || 30));
     S.set.feed.lang = $('#feedlang').value; S.set.feed.proxy = $('#feedproxy').value.trim().slice(0, 500);
+    S.set.feed.clean = $('#feedclean').checked ? 1 : 0;
     save(); toast(t('saved')); renderSources();
   };
   setInterval(() => {

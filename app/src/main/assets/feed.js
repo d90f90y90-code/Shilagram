@@ -228,5 +228,31 @@
     if (!blocks.length) throw err || new Error('article: no content');
     return blocks;
   }
-  G.ShilaFeed = { safeUrl, stripHtml, parseXml, parseJson, load, site, article, parseLinks, extractArticle, PROXIES, MAX_ITEMS };
+  // "Purify": drop boilerplate/navigation blocks only — never rewrite the article text.
+  const JUNK = [
+    /^(شارك|شارك المقال|شاركوا|تابعنا|تابعونا|تابع|انقر هنا|اضغط هنا|اقرأ المزيد|المزيد|التالي|السابق|أخبار ذات صلة|مواضيع ذات صلة|ذات صلة|التعليقات|تعليقات|آخر الأخبار|الأكثر قراءة|الأكثر مشاهدة|إعلان|اعلان|الاشتراك|اشترك|جميع الحقوق محفوظة|الرئيسية|اتصل بنا|من نحن|سياسة الخصوصية|شروط الاستخدام|الوسوم|الرابط|المصدر|مصدر الخبر|كتبه|بقلم|التحديث|تحديث|تنويه|صورة|الصورة|بالصور|فيديو|شاهد أيضاً|اقرأ أيضاً)/i,
+    /^(share|share this|tweet|follow us|follow|read more|more|next|previous|related|related posts|comments|leave a comment|latest news|most read|trending|advertisement|ad|sponsored|subscribe|sign up|login|log in|register|home|about us|contact us|privacy policy|terms of use|tags|source|by |posted by|updated|update|photo|picture|image|credits?|copyright|all rights reserved|skip to content|menu|search|back to)/i,
+    /cookie|ملفات تعريف الارتباط|باستخدامك هذا الموقع|accept all|موافق على/i,
+    /^[\d\s\-./:،,|()]+$/, /^[\s\-–—•*·]+$/, /[©™®]/, /^https?:\/\//i
+  ];
+  function junk(s) {
+    if (JUNK.some(r => r.test(s))) return true;
+    if (s.length < 180 && (s.match(/\s[\/›»>]+\s/g) || []).length >= 2) return true; // breadcrumbs
+    return false;
+  }
+  function purify(blocks) {
+    const out = [], seen = new Set();
+    for (const b of (Array.isArray(blocks) ? blocks : [])) {
+      if (b.k === 'i') {
+        if (/\/(logo|icon|avatar|sprite|pixel|tracker|ads?|banner|emoji|gravatar)|1x1/i.test(b.x)) continue;
+        if (seen.has('i:' + b.x)) continue; seen.add('i:' + b.x); out.push(b); continue;
+      }
+      const s = String(b.x || '').replace(/\s+/g, ' ').trim();
+      if (s.length < 6 || junk(s)) continue;
+      const key = 't:' + s.slice(0, 180);
+      if (seen.has(key)) continue; seen.add(key); out.push(Object.assign({}, b, { x: s }));
+    }
+    return out;
+  }
+  G.ShilaFeed = { safeUrl, stripHtml, parseXml, parseJson, load, site, article, parseLinks, extractArticle, purify, PROXIES, MAX_ITEMS };
 })(window);
