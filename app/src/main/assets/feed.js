@@ -148,18 +148,85 @@
     const txt = await raw(url, custom); const t = txt.trim();
     return t[0] === '{' ? parseJson(JSON.parse(t), url) : parseXml(t, url);
   }
+  async function getText(url) {
+    const s = signal();
+    try {
+      const r = await fetch(url, { signal: s.signal, cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.text();
+    } finally { if (s.done) s.done(); }
+  }
+  // Turn a site HOME PAGE into feed-like items: useful when the site has no RSS at all.
+  function parseLinks(html, base) {
+    const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    doc.querySelectorAll('script,style,noscript,nav,header,footer,aside,form,button,svg').forEach(e => e.remove());
+    const NAV = /^(home|homepage|about|contact|login|register|sign in|privacy|terms|search|archive|الرئيسية|من نحن|اتصل بنا|تسجيل الدخول|بحث|أرشيف)/i;
+    const seenH = new Set(), seenT = new Set(), out = [];
+    for (const a of doc.querySelectorAll('a[href]')) {
+      const href = resolveUrl(a.getAttribute('href'), base);
+      if (!href || seenH.has(href)) continue;
+      const title = (a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (title.length < 12 || title.length > 200 || NAV.test(title) || seenT.has(title)) continue;
+      let img = a.querySelector('img') || (a.parentElement && a.parentElement.querySelector('img'));
+      if (!img && a.parentElement && a.parentElement.parentElement) img = a.parentElement.parentElement.querySelector('img');
+      let src = img ? imgSrc(img, base) : '';
+      if (src && /\/(logo|icon|avatar|sprite)[-_.]/i.test(src)) src = '';
+      seenH.add(href); seenT.add(title);
+      out.push({ id: href.slice(0, 160), title, link: href, desc: '', ts: Date.now(), img: src, html: '' });
+      if (out.length >= 40) break;
+    }
+    return out;
+  }
+  function parseMarkdownLinks(txt, base) {
+    const out = [], seen = new Set(), re = /\[([^\]]{12,200})\]\((https?:\/\/[^)\s]+)\)/g;
+    let m;
+    while ((m = re.exec(String(txt || ''))) && out.length < 40) {
+      const link = safeUrl(m[2]); if (!link || seen.has(link)) continue;
+      seen.add(link); out.push({ id: link.slice(0, 160), title: m[1].replace(/\s+/g, ' ').trim(), link, desc: '', ts: Date.now(), img: '', html: '' });
+    }
+    return out;
+  }
+  async function site(feed, custom) {
+    const url = safeUrl(feed && feed.url); if (!url) throw new Error('site: invalid url');
+    let html = '';
+    try { html = await raw(url, custom, 'html'); } catch (e) {}
+    if (html && html[0] !== '{') { const links = parseLinks(html, url); if (links.length) return links; }
+    try { const md = await getText('https://r.jina.ai/' + url); const links = parseMarkdownLinks(md, url); if (links.length) return links; } catch (e) {}
+    throw new Error('site: no links found');
+  }
+  // Jina returns clean markdown for pages that block normal fetching or render via JS.
+  function markdownBlocks(md, base) {
+    const out = [], seen = new Set();
+    for (let line of String(md || '').split(/\r?\n/)) {
+      line = line.replace(/^\s*[-*+]\s+/, '').trim();
+      if (!line || /^(Title:|URL Source:|Published Time:|Markdown Content:)/i.test(line)) continue;
+      const imgs = line.match(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/gi) || [];
+      imgs.forEach(m => { const u = safeUrl((m.match(/\(([^)]+)\)/) || [])[1]); if (u && !seen.has(u)) { seen.add(u); out.push({ k: 'i', x: u }); } });
+      const title = /^(#{1,4})\s+(.+)$/.exec(line);
+      const quote = /^>\s*(.+)$/.exec(line);
+      let x = line.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '$1')
+        .replace(/[*_`~]/g, '').replace(/\s+/g, ' ').trim();
+      if (!x || x.length < 2) continue;
+      out.push({ k: 't', tag: title ? 'h' + Math.min(4, title[1].length) : (quote ? 'blockquote' : 'p'), x });
+    }
+    return out.slice(0, 160);
+  }
   async function article(item, custom) {
+    if (Array.isArray(item && item.blocks) && item.blocks.length) return item.blocks;
     const base = safeUrl(item && item.link), saved = String(item && item.html || '');
-    let source = saved, err;
+    let source = '', err;
     if (base) {
       try { source = await raw(base, custom, 'html'); }
-      catch (e) { err = e; if (!saved) throw e; }
+      catch (e) { err = e; }
     }
-    if (!source) throw err || new Error('article: empty');
-    let blocks = extractArticle(source, base || 'https://example.com/');
-    if (!blocks.length && saved && source !== saved) blocks = extractArticle(saved, base || 'https://example.com/');
-    if (!blocks.length) throw new Error('article: no content');
+    let blocks = source && source[0] !== '{' ? extractArticle(source, base || 'https://example.com/') : [];
+    if (!blocks.length && saved) blocks = extractArticle(saved, base || 'https://example.com/');
+    if (!blocks.length && base) {
+      try { blocks = markdownBlocks(await getText('https://r.jina.ai/' + base), base); }
+      catch (e) { err = e; }
+    }
+    if (!blocks.length) throw err || new Error('article: no content');
     return blocks;
   }
-  G.ShilaFeed = { safeUrl, stripHtml, parseXml, parseJson, load, article, PROXIES, MAX_ITEMS };
+  G.ShilaFeed = { safeUrl, stripHtml, parseXml, parseJson, load, site, article, parseLinks, extractArticle, PROXIES, MAX_ITEMS };
 })(window);

@@ -87,9 +87,11 @@
   let FEEDS = await DB.get('feeds'), feedCat = 'all', feedLastRun = 0;
   if (FEEDS === undefined || FEEDS === null) { // first run: three useful Iraqi/gaming sources ready to go
     FEEDS = FEED_PRESETS.filter(p => /cmc\.iq|true-gaming\.net|ina\.iq/.test(p.u))
-      .map(p => ({ id: rid(8), url: p.u, title: p.t, cat: p.c, on: 1, items: [], last: 0 }));
+      .map(p => ({ id: rid(8), url: p.u, title: p.t, cat: p.c, type: 'rss', on: 1, items: [], last: 0 }));
   } else FEEDS = FEEDS || [];
-  const feedSave = () => DB.set('feeds', FEEDS);
+  FEEDS.forEach(f => { f.type = f.type === 'site' ? 'site' : 'rss'; });
+  let LOCAL = (await DB.get('feedlocal')) || []; // articles copied into the app by the user
+  const feedSave = () => DB.set('feeds', FEEDS), localSave = () => DB.set('feedlocal', LOCAL);
   feedSave();
   const botClean = x => String(x || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 4000);
   function botKey() { let k = ''; for (let i = 0; i < 6; i++) k += String.fromCharCode(65 + R(26)); for (let i = 0; i < 4; i++) k += R(10); return k; }
@@ -1946,39 +1948,47 @@
   };
 
   // ---------- smart feed UI ----------
-  const feedCatLabel = c => t(c === 'news' ? 'feedNews' : c === 'politics' ? 'feedPolitics' : c === 'games' ? 'feedGames' : 'feedCustom');
+  const feedCatLabel = c => t(c === 'news' ? 'feedNews' : c === 'politics' ? 'feedPolitics' : c === 'games' ? 'feedGames' : c === 'saved' ? 'feedSavedTab' : 'feedCustom');
   function feedItems() {
     const q = ($('#feedq').value || '').trim().toLowerCase(), out = [];
-    FEEDS.forEach(f => {
+    const hit = (it, src) => !q || ((it.title || '') + ' ' + (it.desc || '') + ' ' + (src || '') + ' ' + articleText(it.blocks)).toLowerCase().includes(q);
+    if (feedCat !== 'saved') FEEDS.forEach(f => {
       if (!f.on || (feedCat !== 'all' && f.cat !== feedCat)) return;
-      (f.items || []).forEach(it => {
-        if (q && !((it.title || '') + ' ' + (it.desc || '') + ' ' + f.title).toLowerCase().includes(q)) return;
-        out.push(Object.assign({ src: f.title }, it));
-      });
+      (f.items || []).forEach(it => { if (hit(it, f.title)) out.push(Object.assign({ src: f.title, type: f.type }, it)); });
+    });
+    if (feedCat === 'all' || feedCat === 'saved') LOCAL.forEach(it => {
+      if (hit(it, it.src)) out.push(Object.assign({ src: it.src || t('feedSavedBadge'), type: 'local', local: 1 }, it));
     });
     return out.sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 120);
   }
   function renderFeedChips() {
     const L = $('#fchips'); L.innerHTML = '';
-    [['all', 'feedAll'], ['news', 'feedNews'], ['politics', 'feedPolitics'], ['games', 'feedGames']].forEach(([c, k]) => {
+    [['all', 'feedAll'], ['news', 'feedNews'], ['politics', 'feedPolitics'], ['games', 'feedGames'], ['saved', 'feedSavedTab']].forEach(([c, k]) => {
       const b = document.createElement('button'); b.className = 'chip' + (feedCat === c ? ' on' : ''); b.textContent = t(k);
       b.onclick = () => { feedCat = c; renderFeedChips(); renderFeed(); }; L.append(b);
     });
   }
+  const articleText = blocks => (blocks || []).filter(b => b.k === 't').map(b => b.x).join('\n\n');
+  const articleImgs = blocks => (blocks || []).filter(b => b.k === 'i').map(b => b.x);
   function feedExternal(url) { if (!url) return; try { if (NATIVE && NATIVE.openUrl) NATIVE.openUrl(url); else window.open(url, '_blank'); } catch (e) {} }
+  let articleItem = null;
+  function drawArticleBlocks(blocks) {
+    const body = $('#articleBody'); body.innerHTML = '';
+    blocks.forEach(b => {
+      if (b.k === 'i') { const im = new Image(); im.src = b.x; im.alt = ''; im.loading = 'lazy'; im.onerror = () => im.remove(); body.append(im); }
+      else { const el = document.createElement(/^h[1-4]$/.test(b.tag) ? b.tag : (b.tag === 'blockquote' ? 'blockquote' : 'p')); el.textContent = b.x; body.append(el); }
+    });
+  }
   async function feedOpen(it) {
-    if (!it || (!it.link && !it.html)) return;
-    showPage('article');
+    if (!it || (!it.link && !it.html && !it.blocks)) return;
+    showPage('article'); articleItem = Object.assign({}, it);
     const body = $('#articleBody'); $('#artext').hidden = !it.link;
     $('#arttitle').textContent = it.title || t('articleTitle');
+    $('#ardel').hidden = !it.local;
     body.innerHTML = ''; body.textContent = t('articleLoading') + ' '; body.append(typingDots());
     try {
       const blocks = await ShilaFeed.article(it, S.set.feed.proxy);
-      body.innerHTML = '';
-      blocks.forEach(b => {
-        if (b.k === 'i') { const im = new Image(); im.src = b.x; im.alt = ''; im.loading = 'lazy'; im.onerror = () => im.remove(); body.append(im); }
-        else { const el = document.createElement(/^h[1-4]$/.test(b.tag) ? b.tag : (b.tag === 'blockquote' ? 'blockquote' : 'p')); el.textContent = b.x; body.append(el); }
-      });
+      articleItem.blocks = blocks; drawArticleBlocks(blocks);
       $('#artext').onclick = () => feedExternal(it.link);
     } catch (e) {
       body.innerHTML = '';
@@ -1986,26 +1996,59 @@
       if (it.link) { const b = document.createElement('button'); b.className = 'btn'; b.textContent = t('articleOpenExternal'); b.onclick = () => feedExternal(it.link); body.append(b); }
     }
   }
+  async function feedSaveLocal() {
+    if (!articleItem || !articleItem.blocks) return toast(t('articleNoContent'));
+    const key = articleItem.link || articleItem.id || articleItem.title;
+    if (LOCAL.some(x => (x.link || x.id || x.title) === key)) return toast(t('articleAlready'));
+    if (LOCAL.length >= 50) LOCAL.shift(); // storage cap
+    const imgs = articleImgs(articleItem.blocks);
+    LOCAL.unshift({ id: 'local:' + rid(8), title: articleItem.title || t('articleTitle'), link: articleItem.link || '',
+      src: articleItem.src || t('feedSavedBadge'), desc: articleText(articleItem.blocks).slice(0, 1200),
+      img: imgs[0] || articleItem.img || '', blocks: articleItem.blocks, ts: Date.now() });
+    await localSave(); toast(t('articleSaved'));
+  }
+  $('#arsave').onclick = feedSaveLocal;
+  $('#arcopy').onclick = () => {
+    const x = articleItem && articleText(articleItem.blocks); if (!x) return toast(t('articleNoContent'));
+    copyText(x); toast(t('copied'));
+  };
+  $('#arimgs').onclick = () => {
+    const x = articleItem && articleImgs(articleItem.blocks); if (!x || !x.length) return toast(t('articleNoImages'));
+    copyText(x.join('\n')); toast(t('copied'));
+  };
+  $('#ardel').onclick = async () => {
+    if (!articleItem || !articleItem.local) return;
+    if (!confirm(t('feedConfirmRemove'))) return;
+    LOCAL = LOCAL.filter(x => x.id !== articleItem.id); await localSave(); closePage(); renderFeed(); toast(t('saved'));
+  };
+  const articleAI = kind => {
+    if (!articleItem || !articleItem.blocks) return toast(t('articleNoContent'));
+    feedAI(kind, articleText(articleItem.blocks), articleItem.title);
+  };
+  $('#artr').onclick = () => articleAI('translate');
+  $('#arts').onclick = () => articleAI('summary');
+  $('#artan').onclick = () => articleAI('analyze');
   function renderFeed() {
     const L = $('#feedlist'); if (!L) return; L.innerHTML = '';
-    if (!FEEDS.length) { L.innerHTML = '<div class="empty">' + t('feedNoSources') + '</div>'; return; }
+    if (!FEEDS.length && !LOCAL.length) { L.innerHTML = '<div class="empty">' + t('feedNoSources') + '</div>'; return; }
     const items = feedItems();
     if (!items.length) { L.innerHTML = '<div class="empty">' + t('feedEmpty') + '</div>'; return; }
     items.forEach(it => {
-      const c = document.createElement('article'); c.className = 'fcard';
+      const c = document.createElement('article'); c.className = 'fcard' + (it.local ? ' saved' : '');
       const top = document.createElement('div'); top.className = 'ftop';
       const s = document.createElement('b'); s.textContent = it.src || '';
-      const tm = document.createElement('span'); tm.textContent = it.ts ? new Date(it.ts).toLocaleDateString(I18N.lang) : '';
+      const tm = document.createElement('span'); tm.textContent = (it.local ? '💾 ' : it.type === 'site' ? '🌐 ' : '') + (it.ts ? new Date(it.ts).toLocaleDateString(I18N.lang) : '');
       top.append(s, tm);
       const h = document.createElement('h3'); h.textContent = it.title;
-      if (it.link) { h.className = 'flink'; h.onclick = () => feedOpen(it); }
+      if (it.link || it.blocks) { h.className = 'flink'; h.onclick = () => feedOpen(it); }
       const p = document.createElement('p'); p.textContent = it.desc || '';
       const row = document.createElement('div'); row.className = 'facts';
       const btn = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; row.append(b); };
+      const full = articleText(it.blocks) || (it.title + '\n' + (it.desc || ''));
       btn('↗ ' + t('feedOpen'), () => feedOpen(it));
-      btn('🌐 ' + t('feedTranslate'), () => feedAI('translate', (it.title || '') + '\n' + (it.desc || ''), ''));
-      btn('📝 ' + t('feedSummary'), () => feedAI('summary', it.desc || it.title, it.title));
-      btn('🔍 ' + t('feedAnalyze'), () => feedAI('analyze', it.desc || it.title, it.title));
+      btn('🌐 ' + t('feedTranslate'), () => feedAI('translate', full, it.title));
+      btn('📝 ' + t('feedSummary'), () => feedAI('summary', full, it.title));
+      btn('🔍 ' + t('feedAnalyze'), () => feedAI('analyze', full, it.title));
       if (it.img) { const im = new Image(); im.className = 'fthumb'; im.loading = 'lazy'; im.src = it.img; im.onerror = () => im.remove(); c.append(im); }
       c.append(top, h, p, row); L.append(c);
     });
@@ -2014,8 +2057,10 @@
     const list = one ? [one] : FEEDS.filter(f => f.on); if (!list.length) return;
     if (!quiet) toast(t('feedRefreshing'));
     await Promise.all(list.map(async f => {
-      try { f.items = (await ShilaFeed.load(f, S.set.feed.proxy)).slice(0, ShilaFeed.MAX_ITEMS); f.last = Date.now(); f.err = ''; }
-      catch (e) { f.err = String(e && e.message || 'err').slice(0, 100); }
+      try {
+        f.items = (await (f.type === 'site' ? ShilaFeed.site(f, S.set.feed.proxy) : ShilaFeed.load(f, S.set.feed.proxy))).slice(0, ShilaFeed.MAX_ITEMS);
+        f.last = Date.now(); f.err = '';
+      } catch (e) { f.err = String(e && e.message || 'err').slice(0, 100); }
     }));
     feedLastRun = Date.now(); await feedSave(); renderFeed(); renderSources();
     if (!quiet) toast(t('feedUpdated'));
@@ -2027,7 +2072,7 @@
       const r = document.createElement('div'); r.className = 'fsrow';
       r.innerHTML = '<div class="mid"><b></b><span></span><small></small></div><div class="fsbtns"></div>';
       r.querySelector('b').textContent = f.title; r.querySelector('span').textContent = f.url;
-      r.querySelector('small').textContent = feedCatLabel(f.cat) + ' · ' + ((f.items || []).length) + ' ' + t('feedItems') + (f.err ? ' · ' + t('feedErr') + ': ' + f.err : '');
+      r.querySelector('small').textContent = (f.type === 'site' ? t('feedSiteBadge') : t('feedRssBadge')) + ' · ' + feedCatLabel(f.cat) + ' · ' + ((f.items || []).length) + ' ' + t('feedItems') + (f.err ? ' · ' + t('feedErr') + ': ' + f.err : '');
       const B = r.querySelector('.fsbtns');
       const mk = (txt, fn) => { const b = document.createElement('button'); b.textContent = txt; b.onclick = fn; B.append(b); };
       mk(f.on ? '✅' : '⬜', async () => { f.on = f.on ? 0 : 1; await feedSave(); renderSources(); renderFeed(); });
@@ -2040,7 +2085,7 @@
       const b = document.createElement('button'); b.className = 'chip'; b.textContent = '+ ' + p.t;
       b.onclick = async () => {
         if (FEEDS.some(f => f.url === p.u)) return toast(t('feedExists'));
-        FEEDS.push({ id: rid(8), url: p.u, title: p.t, cat: p.c, on: 1, items: [], last: 0 });
+        FEEDS.push({ id: rid(8), url: p.u, title: p.t, cat: p.c, type: 'rss', on: 1, items: [], last: 0 });
         await feedSave(); renderSources(); renderFeed(); feedRefresh(FEEDS[FEEDS.length - 1]);
       }; P.append(b);
     });
@@ -2080,8 +2125,17 @@
   $('#fsadd').onclick = async () => {
     const u = ShilaFeed.safeUrl($('#fsurl').value); if (!u) return alert(t('feedBadUrl'));
     let host = u; try { host = new URL(u).hostname; } catch (e) {}
-    FEEDS.push({ id: rid(8), url: u, title: noCtl($('#fstitle').value, 40) || host, cat: $('#fscat').value, on: 1, items: [], last: 0 });
-    $('#fsurl').value = ''; $('#fstitle').value = ''; await feedSave(); renderSources(); renderFeed(); toast(t('feedSaved'));
+    const f = { id: rid(8), url: u, title: noCtl($('#fstitle').value, 40) || host, cat: $('#fscat').value, type: 'rss', on: 1, items: [], last: 0 };
+    FEEDS.push(f); $('#fsurl').value = ''; $('#fstitle').value = '';
+    await feedSave(); renderSources(); renderFeed(); toast(t('feedSaved')); feedRefresh(f);
+  };
+  $('#siteadd').onclick = async () => {
+    const u = ShilaFeed.safeUrl($('#siteurl').value); if (!u) return alert(t('feedBadUrl'));
+    if (FEEDS.some(f => f.url === u)) return toast(t('feedExists'));
+    let host = u; try { host = new URL(u).hostname.replace(/^www\./, ''); } catch (e) {}
+    const f = { id: rid(8), url: u, title: noCtl($('#sitetitle').value, 40) || host, cat: $('#sitecat').value, type: 'site', on: 1, items: [], last: 0 };
+    FEEDS.push(f); $('#siteurl').value = ''; $('#sitetitle').value = '';
+    await feedSave(); renderSources(); renderFeed(); toast(t('feedSaved')); feedRefresh(f);
   };
   $('#feedsetSave').onclick = async () => {
     S.set.feed.every = Math.max(5, Math.min(720, Number($('#feedevery').value) || 30));
