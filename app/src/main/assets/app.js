@@ -13,7 +13,7 @@
   // ---------- state ----------
   await DB.init();
   let ME = await DB.get('me'), ID = await DB.get('identity'), S = (await DB.get('state')) || { c: {}, g: {}, ice: '', lang: '' };
-  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14, notyp: 0, autoUpd: 1 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
+  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14, notyp: 0, autoUpd: 1 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.calls = S.calls || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
   I18N.set(S.lang || I18N.detect());
   if (!ME) {
     const mig = await DB.migrateLegacy();
@@ -299,23 +299,27 @@
       r.innerHTML = '<div class="av' + (!g && on(id) ? ' on' : '') + '"></div><div class="mid"><b></b><span></span></div><div class="meta"><div></div></div>';
       avStyle(r.children[0], o.av, g ? '👥' : (o.name || '?')[0]); setName(r.querySelector('b'), o.name, !g && o.st);
       const pv = o.lk === 'st' ? t('sticker') : o.lk === 'img' ? t('photo') : o.lk === 'vo' ? t('voice') : (o.lx || '');
-      const tkl = F.typingNow(typing[id], Date.now()); r.querySelector('span').textContent = tkl.length ? t('typing') : pv || (g ? Object.keys(o.mem).length + t('members') : on(id) ? t('online') : t('offline'));
+      const tkl = F.typingNow(typing[id], Date.now()), sub = r.querySelector('span');
+      if (tkl.length) { sub.textContent = t('typing'); sub.append(typingDots()); }
+      else sub.textContent = pv || (g ? Object.keys(o.mem).length + t('members') : on(id) ? t('online') : t('offline'));
       r.querySelector('.meta div').textContent = o.last ? tm(o.last) : '';
       if (o.u) { const b = document.createElement('span'); b.className = 'bd'; b.textContent = o.u; r.lastChild.append(b); }
       r.onclick = () => open(id); L.append(r);
     });
+    renderStatusStrip();
   }
   async function open(id) {
     cur = id; ch(id).u = 0; save(); clearNotif(id); M[id] = await DB.chatMsgs(id); clearReply();
     $('#chat').classList.add('on'); $('#tray').classList.remove('on'); $('#bc1').style.display = $('#bc2').style.display = '';
-    drawHead(); updateComposer(); pinCur = 0; draw(1); drawPin(); list(); showRot();
+    drawHead(); updateComposer(); pinCur = 0; draw(1); drawPin(); list(); showRot(); updateTabbar();
   }
-  function back() { cur = null; $('#rotb').hidden = true; $('#chat').classList.remove('on'); list(); }
+  function back() { cur = null; $('#rotb').hidden = true; $('#chat').classList.remove('on'); list(); updateTabbar(); }
   function drawHead() {
     const o = ch(cur); if (!o) return;
     setName($('#cn'), o.name, !isG(cur) && o.st); avStyle($('#ca'), o.av, isG(cur) ? '👥' : (o.name || '?')[0]);
-    const tk = F.typingNow(typing[cur], Date.now());
-    $('#cs').textContent = tk.length ? (isG(cur) ? tk.map(k => nmOf(cur, k)).join('، ') + ' ' + (tk.length > 1 ? t('typingMany') : t('typing')) : t('typing')) : isG(cur) ? Object.keys(o.mem).map(k => nmOf(cur, k)).join('، ') : on(cur) ? t('online') + ' · ' + t('secure') : t('offline');
+    const tk = F.typingNow(typing[cur], Date.now()), cs = $('#cs');
+    if (tk.length) { cs.textContent = isG(cur) ? tk.map(k => nmOf(cur, k)).join('، ') + ' ' + (tk.length > 1 ? t('typingMany') : t('typing')) : t('typing'); cs.append(typingDots()); }
+    else cs.textContent = isG(cur) ? Object.keys(o.mem).map(k => nmOf(cur, k)).join('، ') : on(cur) ? t('online') + ' · ' + t('secure') : t('offline');
   }
   function drawPin() {
     const o = ch(cur), b = $('#pinb'); if (!o) { b.hidden = true; return; }
@@ -353,7 +357,9 @@
       else if (m.kind !== 't' && !m.b) { const s = document.createElement('span'); s.textContent = t('mediaGone'); s.style.opacity = '.6'; b.append(s); }
       else { const s = document.createElement('span'); s.textContent = m.x || ''; b.append(s); }
       if (!m.del && m.rx && Object.keys(m.rx).length) { const rr = document.createElement('div'); rr.className = 'rxs'; F.reactionSummary(m.rx, ME.key).forEach(c => { const bt = document.createElement('button'); bt.textContent = c.e + (c.n > 1 ? ' ' + c.n : ''); bt.classList.toggle('mine', c.mine); bt.onclick = ev => { ev.stopPropagation(); react(m, c.e); }; rr.append(bt); }); b.append(rr); }
-      const i = document.createElement('i'); i.textContent = (m.ttl ? '⏳ ' : '') + ((ch(cur).pins || []).includes(m.mid) ? '📌 ' : '') + (m.ed ? t('edited') + ' · ' : '') + tm(m.ts) + (m.me ? (m.p && !m.p.length ? ' ✓✓' : m.sent ? ' ✓' : ' ⏱') : ''); b.append(i);
+      const i = document.createElement('i'); i.textContent = (m.ttl ? '⏳ ' : '') + ((ch(cur).pins || []).includes(m.mid) ? '📌 ' : '') + (m.ed ? t('edited') + ' · ' : '') + tm(m.ts) + (m.me ? ' ' : '');
+      if (m.me) { const tk = document.createElement('span'); tk.className = 'ticks' + (fresh && idx === shown.length - 1 ? ' new' : ''); tk.textContent = m.p && !m.p.length ? '✓✓' : m.sent ? '✓' : '⏱'; i.append(tk); }
+      b.append(i);
       let h; const act = () => showActions(m);
       b.oncontextmenu = e => { e.preventDefault(); act(); };
       b.ontouchstart = () => { h = setTimeout(act, 600); }; b.ontouchend = b.ontouchmove = b.ontouchcancel = () => clearTimeout(h);
@@ -400,8 +406,8 @@
 
   // ---------- pages ----------
   const pgStack = [], PG_ON = {};
-  function showPage(n) { const el = $('#pg-' + n); if (!el || pgStack[pgStack.length - 1] === n) return; pgStack.push(n); el.style.zIndex = 10 + pgStack.length; el.classList.add('on'); if (PG_ON[n]) PG_ON[n](); }
-  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'gmedia' || n === 'shf') dlClear(); if (n === 'shfc' && pgStack[pgStack.length - 1] === 'shf') renderShf(); }
+  function showPage(n) { const el = $('#pg-' + n); if (!el || pgStack[pgStack.length - 1] === n) return; pgStack.push(n); el.style.zIndex = 10 + pgStack.length; el.classList.add('on'); if (PG_ON[n]) PG_ON[n](); updateTabbar(); }
+  function closePage() { const n = pgStack.pop(); if (!n) return; $('#pg-' + n).classList.remove('on'); if (n === 'gmedia' || n === 'shf') dlClear(); if (n === 'shfc' && pgStack[pgStack.length - 1] === 'shf') renderShf(); updateTabbar(); }
   $$('[data-pg]').forEach(b => b.onclick = () => showPage(b.dataset.pg)); $$('.pback').forEach(b => b.onclick = closePage);
   const svgUri = x => 'data:image/svg+xml,' + encodeURIComponent(x);
   const DEF_AV = svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#d9cdf0"/><circle cx="100" cy="78" r="38" fill="#7a65a8"/><path d="M28 200c0-42 32-72 72-72s72 30 72 72z" fill="#7a65a8"/></svg>');
@@ -472,7 +478,7 @@
     const now = Date.now(); let changed = false;
     if (ME.st && !F.statusActive(ME.st, now)) { delete ME.st; DB.set('me', ME); broadcastProfile(); changed = true; }
     for (const o of Object.values(S.c)) if (o.st && !F.statusActive(o.st, now)) { delete o.st; changed = true; }
-    if (changed) { save(); list(); if (cur) drawHead(); if (viewKey && $('#pg-view').classList.contains('on')) fillView(viewKey); }
+    if (changed) { save(); list(); if (cur) drawHead(); if (viewKey && $('#pg-view').classList.contains('on')) fillView(viewKey); if (pgStack[pgStack.length - 1] === 'status') renderStatusList(); }
   }
   async function thumbData(blob) { // sticker -> tiny data URL that fits the status size limit
     const bm = await createImageBitmap(blob);
@@ -673,7 +679,7 @@
       c.on('data', d => { if (d && d.t === 'ans' && typeof d.k === 'string' && KEYRE.test(d.k)) fin(d.k); }); c.on('error', () => fin(null)); c.on('close', () => setTimeout(() => fin(null), 400));
     });
   }
-  $('#bf').onclick = () => { if (!ME.user) return askUser(); if (srch) { clearTimeout(srch.t); srch = null; } $('#fk').value = ''; $('#fs').textContent = ''; $('#fg').disabled = 0; $('#fk').placeholder = t('findPh'); sheet('f'); };
+  $('#bf').onclick = () => showPage('search'); // global message search (with a "find friend" shortcut inside)
   function nf() { if (!srch) return; clearTimeout(srch.t); srch = null; $('#fs').textContent = t('notFoundUser'); $('#fg').disabled = 0; }
   function searchFail(k) { if (!srch) return; clearTimeout(srch.t); srch = null; try { conns[k] && conns[k].close(); } catch (e) {} $('#fs').textContent = t('userMismatch'); $('#fg').disabled = 0; }
   function searchDone(k) {
@@ -1074,7 +1080,8 @@
   }
   async function startCall(video) {
     if (!cur || isG(cur) || call) return; if (!on(cur)) return alert(t('callNeedOnline'));
-    try { const s = await media(video); setupCall(peer.call('shilagram-' + cur, s, { metadata: { video } }), cur, s, video); } catch (e) { alert(t('noMic')); }
+    const k = cur;
+    try { const s = await media(video); setupCall(peer.call('shilagram-' + k, s, { metadata: { video } }), k, s, video); logCall(k, 'out', video, false); } catch (e) { alert(t('noMic')); }
   }
   $('#bc1').onclick = () => isG(cur) ? startGroupCall(false) : startCall(false); $('#bc2').onclick = () => isG(cur) ? startGroupCall(true) : startCall(true); $('#cen').onclick = endCall;
   function toggleMute() { if (!call) return; const tr = call.stream.getAudioTracks()[0]; if (tr) { tr.enabled = !tr.enabled; $('#cmu').textContent = tr.enabled ? '🎙' : '🔇'; $('#cmmu').classList.toggle('off', !tr.enabled); } }
@@ -1088,9 +1095,9 @@
     if (!S.c[k] || !on(k) || call || pendingCall) { try { cl.close(); } catch (e) {} return; } // only authenticated friends may ring us
     pendingCall = cl; const video = !!(cl.metadata && cl.metadata.video);
     $('#inct').textContent = t('incoming') + nmOf(k, k); sheet('inc'); notify(t('incoming') + nmOf(k, k), '', '-');
-    cl.on('close', () => { if (pendingCall === cl) { pendingCall = null; sheet(0); } });
-    $('#inca').onclick = async () => { pendingCall = null; sheet(0); try { const s = await media(video); cl.answer(s); setupCall(cl, k, s, video); } catch (e) { cl.close(); alert(t('noMic')); } };
-    $('#incd').onclick = () => { pendingCall = null; sheet(0); cl.close(); };
+    cl.on('close', () => { if (pendingCall === cl) { pendingCall = null; sheet(0); logCall(k, 'in', video, true); } });
+    $('#inca').onclick = async () => { pendingCall = null; sheet(0); try { const s = await media(video); cl.answer(s); setupCall(cl, k, s, video); logCall(k, 'in', video, false); } catch (e) { cl.close(); alert(t('noMic')); } };
+    $('#incd').onclick = () => { pendingCall = null; sheet(0); logCall(k, 'in', video, true); cl.close(); };
   }
 
   // ---------- username directory: a 2nd PeerJS id "shilagram-u-<name>" answers lookups with our key (first come, first served while online) ----------
@@ -1139,7 +1146,7 @@
   }
   async function startGroupCall(video) {
     const g = S.g[cur]; if (!g || g.left || call) return; let s; try { s = await media(video); } catch (e) { return alert(t('noMic')); }
-    call = { group: cur, k: cur, video: !!video, stream: s, parts: {} }; showCall(cur, t('gcWait')); addTile(ME.key, s, true);
+    call = { group: cur, k: cur, video: !!video, stream: s, parts: {} }; showCall(cur, t('gcWait')); addTile(ME.key, s, true); logCall(cur, 'out', video, false);
     members(cur).forEach(k => on(k) && sealTo(conns[k], { t: 'gci', g: cur, v: video ? 1 : 0 }));
   }
   function onGroupInvite(k, h) {
@@ -1150,7 +1157,7 @@
   }
   async function joinGroupCall(inv) {
     sheet(0); if (call || !S.g[inv.g]) return; let s; try { s = await media(inv.video); } catch (e) { return alert(t('noMic')); }
-    call = { group: inv.g, k: inv.g, video: inv.video, stream: s, parts: {} }; showCall(inv.g, t('gcWait')); addTile(ME.key, s, true);
+    call = { group: inv.g, k: inv.g, video: inv.video, stream: s, parts: {} }; showCall(inv.g, t('gcWait')); addTile(ME.key, s, true); logCall(inv.g, 'in', inv.video, false);
     members(inv.g).forEach(k => on(k) && sealTo(conns[k], { t: 'gcj', g: inv.g }));
   }
   // ---------- camera toggle + screen sharing (video calls) ----------
@@ -1520,14 +1527,129 @@
   };
   $('#rst').onclick = async () => { if (!confirm(t('confirmReset'))) return; await DB.wipe(); try { localStorage.clear(); } catch (e) {} location.reload(); };
 
+  // ---------- bottom tab bar ----------
+  let activeTab = 'home';
+  function typingDots() { const d = document.createElement('span'); d.className = 'typing-ind'; d.innerHTML = '<i></i><i></i><i></i>'; return d; }
+  function updateTabbar() {
+    const bar = $('#tabbar'); if (!bar) return;
+    bar.classList.toggle('hide', !!cur);
+    $$('#tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === activeTab));
+  }
+  $$('#tabbar button').forEach(b => b.onclick = () => {
+    activeTab = b.dataset.tab;
+    if (activeTab === 'home') { while (pgStack.length) closePage(); back(); }
+    else if (activeTab === 'calls') showPage('calls');
+    else if (activeTab === 'status') showPage('status');
+    else if (activeTab === 'settings') showPage('set');
+    updateTabbar();
+  });
+
+  // ---------- status strip (home) + statuses page ----------
+  function statusEntries() {
+    const now = Date.now(), out = [];
+    if (F.statusActive(ME.st, now)) out.push([ME.key, ME, ME.st, true]);
+    Object.entries(S.c).forEach(([k, o]) => { if (o.st && F.statusActive(o.st, now)) out.push([k, o, o.st, false]); });
+    return out;
+  }
+  function renderStatusStrip() {
+    const strip = $('#ststrip'); if (!strip) return;
+    const es = statusEntries();
+    if (!es.length) { strip.innerHTML = ''; strip.classList.remove('on'); return; }
+    strip.classList.add('on'); strip.innerHTML = '';
+    es.forEach(([k, o, st, mine]) => {
+      const b = document.createElement('button'); b.className = 'stab';
+      const ring = document.createElement('span'); ring.className = 'sring'; const n = stNode(st); if (n) ring.append(n); b.append(ring);
+      const nm = document.createElement('span'); nm.className = 'sname'; nm.textContent = mine ? t('statusMe') : (o.name || k); b.append(nm);
+      b.onclick = () => mine ? openStatus() : openProfileView(k);
+      strip.append(b);
+    });
+  }
+  function renderStatusList() {
+    const L = $('#stlist'); if (!L) return; L.innerHTML = '';
+    const es = statusEntries();
+    if (!es.length) { L.innerHTML = '<div class="empty">' + t('noStatus') + '</div>'; return; }
+    es.forEach(([k, o, st, mine]) => {
+      const r = document.createElement('div'); r.className = 'row srow';
+      const av = document.createElement('div'); av.className = 'av'; avStyle(av, o.av, (o.name || '?')[0]); r.append(av);
+      const mid = document.createElement('div'); mid.className = 'mid';
+      const b = document.createElement('b'); b.textContent = mine ? t('statusMe') : (o.name || k);
+      const s = document.createElement('span'), lv = F.statusLeft(st, Date.now());
+      s.textContent = (st.k === 'e' ? st.v : '🖼 ' + t('photo')) + (lv ? ' · ' + t('stLeft') + lv.n + ' ' + t('st_' + lv.u) : '');
+      mid.append(b, s); r.append(mid);
+      const meta = document.createElement('div'); meta.className = 'meta'; const d = document.createElement('div'); const n = stNode(st); if (n) d.append(n); meta.append(d); r.append(meta);
+      r.onclick = () => mine ? openStatus() : openProfileView(k);
+      L.append(r);
+    });
+  }
+  PG_ON.status = renderStatusList;
+
+  // ---------- call log ----------
+  function logCall(k, dir, video, miss) {
+    S.calls = S.calls || [];
+    S.calls.unshift({ k, t: Date.now(), d: dir, v: video ? 1 : 0, m: miss ? 1 : 0 });
+    if (S.calls.length > 100) S.calls.length = 100;
+    save(); if (pgStack[pgStack.length - 1] === 'calls') renderCallLog();
+  }
+  function renderCallLog() {
+    const L = $('#calllog'); if (!L) return; L.innerHTML = '';
+    const calls = (S.calls || []).slice(0, 100);
+    if (!calls.length) { L.innerHTML = '<div class="empty">' + t('noCalls') + '</div>'; return; }
+    calls.forEach(c => {
+      const o = ch(c.k), nm = (o && o.name) || c.k, r = document.createElement('div'); r.className = 'row callrow' + (c.m ? ' missed' : '');
+      const av = document.createElement('div'); av.className = 'av'; avStyle(av, o && o.av, nm[0]); r.append(av);
+      const mid = document.createElement('div'); mid.className = 'mid';
+      const b = document.createElement('b'); b.textContent = nm;
+      const s = document.createElement('span');
+      s.textContent = (c.m ? '❌ ' : c.d === 'out' ? '↗ ' : '↙ ') + (c.d === 'out' ? t('callOut') : t('callIn')) + (c.m ? ' · ' + t('callMissed') : '') + ' · ' + (c.v ? t('callVideo') : t('callAudio'));
+      mid.append(b, s); r.append(mid);
+      const meta = document.createElement('div'); meta.className = 'meta'; const d = document.createElement('div'); d.textContent = tm(c.t); meta.append(d); r.append(meta);
+      r.onclick = () => { while (pgStack.length) closePage(); open(c.k); };
+      L.append(r);
+    });
+  }
+  PG_ON.calls = renderCallLog;
+  $('#clrcalls').onclick = () => { if (!confirm(t('confirmClear'))) return; S.calls = []; save(); renderCallLog(); toast(t('cleared')); };
+
+  // ---------- global message search ----------
+  PG_ON.search = () => { $('#gq').value = ''; $('#gqres').innerHTML = ''; setTimeout(() => { try { $('#gq').focus(); } catch (e) {} }, 120); };
+  let gqTid = null;
+  $('#gq').oninput = e => {
+    clearTimeout(gqTid); const q = e.target.value.trim().toLowerCase();
+    if (!q) { $('#gqres').innerHTML = ''; return; }
+    gqTid = setTimeout(async () => {
+      let ms; try { ms = await DB.allMsgs(); } catch (_) { ms = []; }
+      const hits = ms.filter(m => !m.del && m.x && String(m.x).toLowerCase().includes(q)).sort((a, b) => b.ts - a.ts).slice(0, 80);
+      const R = $('#gqres'); R.innerHTML = '';
+      if (!hits.length) { R.innerHTML = '<div class="empty">' + t('searchNoResults') + '</div>'; return; }
+      const head = document.createElement('div'); head.className = 'sec'; head.textContent = hits.length + (hits.length >= 80 ? '+' : '') + ' ' + t('searchMsgs'); R.append(head);
+      let re = null; try { re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'); } catch (_) {}
+      hits.forEach(m => {
+        const o = ch(m.chat), r = document.createElement('div'); r.className = 'row sres';
+        const mid = document.createElement('div'); mid.className = 'mid';
+        const b = document.createElement('b'); b.textContent = ((o && o.name) || m.chat) + ' · ' + t('searchIn');
+        const s = document.createElement('span'), txt = String(m.x), parts = re ? txt.split(re) : [txt];
+        parts.forEach(p => { if (p.toLowerCase() === q) { const mk = document.createElement('mark'); mk.textContent = p; s.append(mk); } else s.append(document.createTextNode(p)); });
+        mid.append(b, s); r.append(mid);
+        const meta = document.createElement('div'); meta.className = 'meta'; const d = document.createElement('div'); d.textContent = tm(m.ts); meta.append(d); r.append(meta);
+        r.onclick = async () => { await open(m.chat); while (pgStack.length) closePage(); jumpTo(m.mid); };
+        R.append(r);
+      });
+    }, 180);
+  };
+  $('#gqfriend').onclick = () => {
+    if (!ME.user) return askUser();
+    if (srch) { clearTimeout(srch.t); srch = null; }
+    $('#fk').value = ''; $('#fs').textContent = ''; $('#fg').disabled = 0; $('#fk').placeholder = t('findPh'); sheet('f');
+  };
+
   // ---------- boot ----------
   function applyLang() {
     $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t)); document.documentElement.style.setProperty('--sd', I18N.lang === 'ar' ? 1 : -1);
-    $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh');
+    $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh'); $('#gq').placeholder = t('searchPh');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
   if (window.__DEBUG) window.__app = { ME, fillView, openStatus, statusTick, receiveProfile, S, conns, rot, seen, on, checkRotation, dirLookup, open, list, sendMsg, sweep, react, togglePin, getM, handlePlain, sendCtlQ, tsvLoop, askPassword, saveTsv, get TSV() { return TSV; }, get M() { return M; }, get typing() { return typing; }, get dirPeer() { return dirPeer; }, get call() { return call; } };
-  await loadBg(); applySettings(); drawMine(); applyLang(); if (PIN) unlockLoop(); start(); sweep(); statusTick(); if (!ME.user) setTimeout(askUser, 500);
+  await loadBg(); applySettings(); drawMine(); applyLang(); updateTabbar(); if (PIN) unlockLoop(); start(); sweep(); statusTick(); if (!ME.user) setTimeout(askUser, 500);
   if (NATIVE && S.set.autoUpd && Date.now() - (S.updAt || 0) > 12 * 3600e3) setTimeout(async () => { S.updAt = Date.now(); save(); if (await checkUpdate(true)) toast(t('updBanner')); }, 8000);
   if (NATIVE && NATIVE.ready) try { NATIVE.ready(); } catch (e) {}
 })();
