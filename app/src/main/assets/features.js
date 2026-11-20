@@ -65,10 +65,11 @@
   const okStatusImg = v => typeof v === 'string' && v.length <= STATUS_IMG_MAX && /^data:image\/(?:png|webp|jpeg);base64,[A-Za-z0-9+\/=]+$/.test(v);
   const hoursToMs = h => { h = Number(h); return Number.isFinite(h) && h > 0 && h * 3600000 <= STATUS_MAX_MS ? Math.round(h * 3600000) : 0; };
   const okStatusContent = (k, v) => (k === 'e' && okEmoji(v)) || ((k === 'i' || k === 'v') && okStatusImg(v)); // 'e' kept for old peers
-  function makeStatus(k, v, hours, now, vid) { // what the owner stores; null if the content is not acceptable
+  function makeStatus(k, v, hours, now, vid, img) { // what the owner stores; null if the content is not acceptable
     if (!okStatusContent(k, v)) return null;
     const ms = hoursToMs(hours), st = { k, v, x: ms ? now + ms : 0 };
     if (k === 'v' && STATUS_MEDIA_RE.test(vid || '')) st.vid = vid;
+    if (k === 'i' && STATUS_MEDIA_RE.test(img || '')) st.img = img;
     return st;
   }
   const statusActive = (st, now) => !!st && (st.x === 0 || st.x > now);
@@ -76,6 +77,7 @@
     if (!statusActive(st, now)) return '';
     const h = { k: st.k, v: st.v, r: st.x ? st.x - now : 0 };
     if (st.vid) h.vid = st.vid;
+    if (st.img) h.img = st.img;
     return h;
   }
   function cleanStatus(h, now) { // what a receiver keeps; anything odd is dropped
@@ -84,6 +86,7 @@
     if (!okStatusContent(h.k, h.v)) return null;
     const st = { k: h.k, v: h.v, x: r ? now + r : 0 };
     if (h.k === 'v' && STATUS_MEDIA_RE.test(h.vid || '')) st.vid = h.vid;
+    if (h.k === 'i' && STATUS_MEDIA_RE.test(h.img || '')) st.img = h.img;
     return st;
   }
   function statusLeft(st, now) { if (!st || !st.x) return null; const ms = Math.max(0, st.x - now), m = Math.ceil(ms / 60000); return m >= 2880 ? { n: Math.round(m / 1440), u: 'd' } : m >= 120 ? { n: Math.round(m / 60), u: 'h' } : { n: Math.max(1, m), u: 'm' }; }

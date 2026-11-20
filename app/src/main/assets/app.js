@@ -476,7 +476,7 @@
   }
   function statusTick() {
     const now = Date.now(); let changed = false;
-    if (ME.st && !F.statusActive(ME.st, now)) { if (ME.st.vid) DB.del('stvideo:' + ME.st.vid); delete ME.st; DB.set('me', ME); broadcastProfile(); changed = true; }
+    if (ME.st && !F.statusActive(ME.st, now)) { if (ME.st.vid) DB.del('stvideo:' + ME.st.vid); if (ME.st.img) DB.del('stimg:' + ME.st.img); delete ME.st; DB.set('me', ME); broadcastProfile(); changed = true; }
     for (const o of Object.values(S.c)) if (o.st && !F.statusActive(o.st, now)) { delete o.st; changed = true; }
     if (changed) { save(); list(); if (cur) drawHead(); if (viewKey && $('#pg-view').classList.contains('on')) fillView(viewKey); if (pgStack[pgStack.length - 1] === 'status') renderStatusList(); }
   }
@@ -488,10 +488,12 @@
   let stDraft = null;
   function stReset() {
     stDraft = null; $('#ster').textContent = '';
-    ['#stchoices', '#stwriter', '#stcomposer'].forEach(s => $(s).hidden = true);
+    ['#stchoices', '#stwriter', '#stcomposer', '#stpanel'].forEach(s => $(s).hidden = true);
+    $('#addstat').setAttribute('aria-expanded', 'false'); $('#addstat').classList.remove('open');
   }
   function stComposer() {
     if (!stDraft) return;
+    $('#stpanel').hidden = false; $('#addstat').setAttribute('aria-expanded', 'true'); $('#addstat').classList.add('open');
     $('#stchoices').hidden = true; $('#stwriter').hidden = true; $('#stcomposer').hidden = false;
     $('#sthr').placeholder = t('stCustomH'); $('#sthr').value = ''; $('#ster').textContent = '';
     const D = $('#stdur'); D.innerHTML = '';
@@ -506,7 +508,7 @@
   }
   function stStart() {
     const c = F.statusActive(ME.st, Date.now()) ? ME.st : null;
-    stReset(); stDraft = { k: c ? c.k : 'i', v: c ? c.v : '', vid: c && c.vid, h: 24 };
+    stReset(); stDraft = { k: c ? c.k : 'i', v: c ? c.v : '', vid: c && c.vid, img: c && c.img, h: 24 };
     $('#stclr').style.display = c ? '' : 'none';
   }
   function openStatus() { // edit from profile / viewer: jump to the status hub with the composer open
@@ -517,17 +519,29 @@
   $('#vstr').onclick = openStatus;
   $('#addstat').onclick = () => {
     if (!ME.user) return askUser();
-    const wasOpen = !$('#stchoices').hidden;
+    if (!$('#stpanel').hidden) return stReset();
     stStart();
-    if (!wasOpen) $('#stchoices').hidden = false;
+    $('#stpanel').hidden = false; $('#addstat').setAttribute('aria-expanded', 'true'); $('#addstat').classList.add('open');
+    $('#stchoices').hidden = false;
   };
+  $('#stcancel').onclick = stReset;
   $('#stchimg').onclick = () => $('#stfile').click();
   $('#stchvid').onclick = () => $('#stvfile').click();
   $('#stchsheet').onclick = () => { $('#stchoices').hidden = true; $('#stwriter').hidden = false; sheetPreview(); $('#sttxt').focus(); };
   $('#sthr').oninput = e => { if (!stDraft) return; stDraft.h = e.target.value === '' ? 24 : +e.target.value; stRender(); };
+  function stDropDraft() { // remove a locally stored pick that was never posted
+    if (!stDraft) return; const c = ME.st || {};
+    if (stDraft.img && stDraft.img !== c.img) DB.del('stimg:' + stDraft.img);
+    if (stDraft.vid && stDraft.vid !== c.vid) DB.del('stvideo:' + stDraft.vid);
+  }
   $('#stfile').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return; const keepH = stDraft ? stDraft.h : 24;
-    try { const u = await cropImage(f, { w: 64, h: 64, circle: 1, max: 8000 }); if (u && F.okStatusImg(u)) { stDraft = { k: 'i', v: u, h: keepH }; stComposer(); } else toast(t('stNoImg')); } catch (x) { toast(t('stNoImg')); }
+    try {
+      const u = await cropImage(f, { w: 128, h: 128, circle: 1, max: 8800 });
+      if (!u || !F.okStatusImg(u)) return toast(t('stNoImg'));
+      const img = rid(8); await DB.set('stimg:' + img, f);
+      stDropDraft(); stDraft = { k: 'i', v: u, img, h: keepH }; stComposer();
+    } catch (x) { toast(t('stNoImg')); }
   };
   $('#stvfile').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
@@ -543,7 +557,7 @@
       const poster = await tinyData(cv);
       if (!poster) return toast(t('stNoVideo'));
       const vid = rid(8); await DB.set('stvideo:' + vid, f);
-      stDraft = { k: 'v', v: poster, vid, h: keepH }; stComposer(); toast(t('stPosterNote'));
+      stDropDraft(); stDraft = { k: 'v', v: poster, vid, h: keepH }; stComposer(); toast(t('stPosterNote'));
     } catch (x) { toast(t('stNoVideo')); } finally { URL.revokeObjectURL(url); }
   };
   function sheetPreview() {
@@ -561,17 +575,24 @@
     if (!($('#sttxt').value || '').trim()) return ($('#ster').textContent = t('stBad'));
     sheetPreview(); const u = await tinyData($('#stcanvas'));
     if (!u) return ($('#ster').textContent = t('stNoImg'));
-    stDraft = { k: 'i', v: u, h: stDraft ? stDraft.h : 24 }; $('#ster').textContent = ''; stComposer();
+    let img = null;
+    try { const blob = await new Promise(r => $('#stcanvas').toBlob(r, 'image/png')); if (blob) { img = rid(8); await DB.set('stimg:' + img, blob); } } catch (x) {}
+    stDropDraft(); stDraft = { k: 'i', v: u, img, h: stDraft ? stDraft.h : 24 }; $('#ster').textContent = ''; stComposer();
   };
+  function stCleanPrev(nxt) {
+    const p = ME.st; if (!p) return;
+    if (p.vid && p.vid !== (nxt && nxt.vid)) DB.del('stvideo:' + p.vid);
+    if (p.img && p.img !== (nxt && nxt.img)) DB.del('stimg:' + p.img);
+  }
   $('#stok').onclick = () => {
     if (!stDraft || !stDraft.v) return ($('#ster').textContent = t('stBad'));
-    const st = F.makeStatus(stDraft.k, stDraft.v, stDraft.h, Date.now(), stDraft.vid); if (!st) return ($('#ster').textContent = t('stBad'));
-    if (ME.st && ME.st.vid && ME.st.vid !== st.vid) DB.del('stvideo:' + ME.st.vid);
+    const st = F.makeStatus(stDraft.k, stDraft.v, stDraft.h, Date.now(), stDraft.vid, stDraft.img); if (!st) return ($('#ster').textContent = t('stBad'));
+    stCleanPrev(st);
     ME.st = st; DB.set('me', ME); broadcastProfile(); if (viewKey === ME.key) fillView(ME.key);
     stReset(); renderStatusStrip(); renderStatusList(); toast(t('stSaved'));
   };
   $('#stclr').onclick = () => {
-    if (ME.st && ME.st.vid) DB.del('stvideo:' + ME.st.vid);
+    stCleanPrev(null);
     delete ME.st; DB.set('me', ME); broadcastProfile(); if (viewKey === ME.key) fillView(ME.key);
     stReset(); renderStatusStrip(); renderStatusList(); toast(t('stCleared'));
   };
@@ -580,15 +601,22 @@
     const st = k === ME.key ? ME.st : (S.c[k] && S.c[k].st); if (!st) return;
     const o = ch(k); closeStatusView(); const seq = ++stViewSeq, body = $('#stvbody'); $('#stvnm').textContent = k === ME.key ? t('statusMe') : (o && o.name || k);
     $('#stve').hidden = k !== ME.key; $('#stview').classList.add('on');
-    if (st.k === 'v' && st.vid) {
-      DB.get('stvideo:' + st.vid).then(blob => {
+    const showImg = src => { if (seq === stViewSeq) { const im = new Image(); im.src = src; body.append(im); } };
+    const local = st.k === 'v' ? st.vid : st.img;
+    if (local) {
+      DB.get((st.k === 'v' ? 'stvideo:' : 'stimg:') + local).then(blob => {
         if (seq !== stViewSeq) return;
-        if (!blob) { const im = new Image(); im.src = st.v; body.append(im); return; }
-        const v = document.createElement('video'); v.src = URL.createObjectURL(blob); v.controls = true; v.autoplay = true; v.playsInline = true; body.append(v);
-      });
-    } else { const im = new Image(); im.src = st.v; body.append(im); }
+        if (!blob) return showImg(st.v);
+        if (st.k === 'v') { const v = document.createElement('video'); v.src = URL.createObjectURL(blob); v.controls = true; v.autoplay = true; v.playsInline = true; body.append(v); }
+        else showImg(URL.createObjectURL(blob));
+      }).catch(() => showImg(st.v));
+    } else showImg(st.v);
   }
-  function closeStatusView() { stViewSeq++; $('#stview').classList.remove('on'); const v = $('#stvbody video'); if (v) { v.pause(); if (v.src) URL.revokeObjectURL(v.src); } $('#stvbody').innerHTML = ''; }
+  function closeStatusView() {
+    stViewSeq++; $('#stview').classList.remove('on');
+    $$('#stvbody img, #stvbody video').forEach(el => { if (el.tagName === 'VIDEO') el.pause(); if ((el.src || '').startsWith('blob:')) URL.revokeObjectURL(el.src); });
+    $('#stvbody').innerHTML = '';
+  }
   $('#stvc').onclick = closeStatusView;
   $('#stve').onclick = () => { closeStatusView(); openStatus(); };
   function openProfileView(key) { fillView(key); showPage('view'); }
