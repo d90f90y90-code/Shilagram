@@ -421,10 +421,10 @@
   }
   async function open(id) {
     cur = id; ch(id).u = 0; save(); clearNotif(id); M[id] = await DB.chatMsgs(id); clearReply();
-    $('#chat').classList.add('on'); $('#tray').classList.remove('on'); $('#bc1').style.display = $('#bc2').style.display = '';
+    $('#chat').classList.add('on'); $('#tbempty').hidden = true; $('#tray').classList.remove('on'); $('#bc1').style.display = $('#bc2').style.display = '';
     drawHead(); updateComposer(); pinCur = 0; draw(1); drawPin(); list(); showRot(); updateTabbar();
   }
-  function back() { cur = null; $('#rotb').hidden = true; $('#chat').classList.remove('on'); list(); updateTabbar(); }
+  function back() { cur = null; $('#rotb').hidden = true; $('#chat').classList.remove('on'); $('#tbempty').hidden = false; list(); updateTabbar(); }
   function drawHead() {
     const o = ch(cur); if (!o) return;
     setName($('#cn'), o.name, !isG(cur) && o.st); avStyle($('#ca'), o.av, isG(cur) ? '👥' : (o.name || '?')[0]);
@@ -874,7 +874,6 @@
       b.onclick = () => { st.bg = o.t === 'none' ? { t: 'none' } : { t: o.t, v: o.v }; save(); applySettings(); renderSettings(); }; G.append(b); });
     const im = document.createElement('button'); im.textContent = '🖼'; if (st.bg.t === 'img' && bgUrl) { im.style.backgroundImage = 'url(' + bgUrl + ')'; im.textContent = ''; } im.classList.toggle('on', st.bg.t === 'img'); im.onclick = () => $('#bgf').click(); G.append(im);
   }
-  $('#bst').onclick = () => showPage('set');
   $$('#thm button').forEach(b => b.onclick = () => { S.set.theme = b.dataset.th; save(); applySettings(); renderSettings(); });
   $('#animToggle').onchange = e => { S.set.nomo = e.target.checked ? 0 : 1; save(); applySettings(); };
   $('#fsz').oninput = e => { S.set.fs = +e.target.value; save(); applySettings(); };
