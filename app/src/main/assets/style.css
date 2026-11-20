@@ -796,3 +796,70 @@ header small { font-size: 11.5px; opacity: .8; }
 .schedrow .mid span { display: block; font-size: 11px; color: var(--mut); margin-top: 3px; white-space: normal; }
 .nomo .poll .po, .nomo .poll .po em { transition: none; }
 @media (prefers-reduced-motion: reduce) { .poll .po, .poll .po em { transition: none; } }
+
+/* ==========================================================================
+   Smart RSS/Atom feed + AI actions
+   ========================================================================== */
+.feedbody { padding: 10px 14px 22px; }
+.feedbar { display: flex; gap: 8px; align-items: center; }
+.feedbar input {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 10px 12px;
+  border: 1px solid var(--hair); border-radius: 12px; background: var(--bg2); color: var(--ink);
+}
+.feedbar .ib {
+  width: 40px; height: 40px; flex: 0 0 auto; border-radius: 12px; font-size: 18px;
+  border: 1px solid var(--hair); background: var(--bg2); color: var(--ink); cursor: pointer;
+}
+.feedbar .ib:active { transform: scale(.93); }
+.fchips { display: flex; gap: 6px; overflow-x: auto; padding: 10px 0 4px; scrollbar-width: none; }
+.fchips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto; padding: 7px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--hair); background: var(--bg2); color: var(--ink); cursor: pointer;
+}
+.chip.on { background: var(--pri); color: #fff; border-color: var(--pri); }
+.fcard {
+  margin-top: 10px; padding: 14px; border-radius: 16px; border: 1px solid var(--hair);
+  background: var(--bg2); box-shadow: 0 2px 10px rgba(0, 0, 0, .04);
+  animation: shila-soft .24s ease-out both;
+}
+.ftop { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--mut); }
+.ftop b { color: var(--pri); }
+.fcard h3 { margin: 8px 0 6px; font-size: 14.5px; line-height: 1.45; }
+.fcard h3.flink { cursor: pointer; }
+.fcard h3.flink:hover { color: var(--pri); }
+.fcard p {
+  margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--mut);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.facts button {
+  padding: 6px 9px; font-size: 11px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--hair); background: var(--bg); color: var(--ink);
+}
+.facts button:hover { border-color: var(--pri); color: var(--pri); }
+.fthumb { display: block; width: 100%; max-height: 170px; object-fit: cover; border-radius: 10px; margin-top: 10px; background: var(--bg); }
+.fhint { padding: 0 4px 6px; margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--mut); }
+.fsec { margin: 18px 4px 8px; font-size: 12px; font-weight: 700; color: var(--pri); }
+.fsrow {
+  display: flex; align-items: center; gap: 8px; padding: 11px 12px; margin-bottom: 8px;
+  border-radius: 14px; border: 1px solid var(--hair); background: var(--bg2);
+}
+.fsrow .mid { flex: 1; min-width: 0; }
+.fsrow .mid b { display: block; font-size: 13px; }
+.fsrow .mid span { display: block; font-size: 10.5px; color: var(--mut); word-break: break-all; direction: ltr; text-align: start; }
+.fsrow .mid small { display: block; margin-top: 3px; font-size: 10px; color: var(--mut); }
+.fsbtns { display: flex; gap: 3px; }
+.fsbtns button {
+  width: 30px; height: 30px; border-radius: 9px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--hair); background: var(--bg); color: var(--ink);
+}
+.fadd, .fset { display: grid; gap: 8px; }
+.fset { gap: 10px; padding-bottom: 16px; }
+.fset label { display: grid; gap: 5px; font-size: 11.5px; color: var(--mut); }
+.aibody {
+  padding: 14px; min-height: 120px; max-height: 52vh; overflow: auto; white-space: pre-wrap;
+  line-height: 1.7; font-size: 13.5px; border: 1px solid var(--hair); border-radius: 14px; background: var(--bg);
+}
+.nomo .fcard { animation: none; }
+@media (prefers-reduced-motion: reduce) { .fcard { animation: none; } }

@@ -13,7 +13,7 @@
   // ---------- state ----------
   await DB.init();
   let ME = await DB.get('me'), ID = await DB.get('identity'), S = (await DB.get('state')) || { c: {}, g: {}, ice: '', lang: '' };
-  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14, notyp: 0, autoUpd: 1 }, S.set || {}); S.block = S.block || {}; S.recs = S.recs || []; S.calls = S.calls || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
+  S.c = S.c || {}; S.g = S.g || {}; S.set = Object.assign({ theme: 'shili', fs: 15, bg: { t: 'none' }, cust: {}, nt: 1, np: 0, lockAfter: 0, secure: 0, enter: 0, h24: 0, nomo: 0, br: 14, notyp: 0, autoUpd: 1, feed: { every: 30, lang: 'ar', proxy: '' } }, S.set || {}); S.set.feed = Object.assign({ every: 30, lang: 'ar', proxy: '' }, S.set.feed || {}); S.block = S.block || {}; S.recs = S.recs || []; S.calls = S.calls || []; S.req = S.req || {}; S.out = S.out || {}; S.ga = S.ga || {}; S.pins = S.pins || {}; S.dec = S.dec || {}; S.set.call = Object.assign({ echo: 1, noise: 1, agc: 1, front: 1 }, S.set.call || {});
   I18N.set(S.lang || I18N.detect());
   if (!ME) {
     const mig = await DB.migrateLegacy();
@@ -72,6 +72,17 @@
   if (!BOT_MODELS.includes(BOT.model) || /^gemini-2\.5|^gemini-3\.5-flash$/.test(BOT.model)) BOT.model = BOT_DEF.model; // new keys cannot use 2.5
   BOT.key = BOT.key || botKey(); BOT.api = BOT.api || '';
   const botSave = () => DB.set('bot', BOT), botBusy = {};
+
+  // ---------- smart RSS/Atom feed ----------
+  const FEED_PRESETS = [
+    { t: 'BBC Arabic', u: 'https://feeds.bbci.co.uk/arabic/rss.xml', c: 'news' },
+    { t: 'Al Jazeera', u: 'https://www.aljazeera.com/xml/rss/all.xml', c: 'news' },
+    { t: 'BBC Politics', u: 'https://feeds.bbci.co.uk/news/politics/rss.xml', c: 'politics' },
+    { t: 'IGN Games', u: 'https://feeds.ign.com/ign/games-all', c: 'games' },
+    { t: 'GameSpot', u: 'https://www.gamespot.com/feeds/news/', c: 'games' }
+  ];
+  let FEEDS = (await DB.get('feeds')) || [], feedCat = 'all', feedLastRun = 0;
+  const feedSave = () => DB.set('feeds', FEEDS);
   const botClean = x => String(x || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 4000);
   function botKey() { let k = ''; for (let i = 0; i < 6; i++) k += String.fromCharCode(65 + R(26)); for (let i = 0; i < 4; i++) k += R(10); return k; }
   async function botIdentity() {
@@ -496,6 +507,7 @@
     if (!m.del && (m.x || m.b)) add('↪ ' + t('forward'), () => openForward(m));
     if (!m.del && canPin(cur, ME.key)) add('📌 ' + ((ch(cur).pins || []).includes(m.mid) ? t('unpin') : t('pin')), () => togglePin(m));
     if (!m.del && m.kind === 't' && m.x) add(t('copy'), () => copyText(m.x));
+    if (!m.del && m.kind === 't' && m.x) add('🌐 ' + t('feedTranslate'), () => feedAI('translate', m.x, ''));
     if (!m.del && m.me && m.kind === 't') add(t('edit'), async () => {
       const x = (dialog(t('edit'), m.x) || '').trim(); if (!x || x === m.x) return;
       m.x = x; m.ed = 1; await DB.putMsg(m); sendCtl(cur, { t: 'ed', i: m.mid, x }); await refreshMeta(cur); draw(); list();
@@ -1825,6 +1837,7 @@
     if (activeTab === 'home') { while (pgStack.length) closePage(); back(); }
     else if (activeTab === 'calls') showPage('calls');
     else if (activeTab === 'status') showPage('status');
+    else if (activeTab === 'feed') showPage('feed');
     else if (activeTab === 'settings') showPage('set');
     updateTabbar();
   });
@@ -1924,12 +1937,140 @@
     $('#fk').value = ''; $('#fs').textContent = ''; $('#fg').disabled = 0; $('#fk').placeholder = t('findPh'); sheet('f');
   };
 
+  // ---------- smart feed UI ----------
+  const feedCatLabel = c => t(c === 'news' ? 'feedNews' : c === 'politics' ? 'feedPolitics' : c === 'games' ? 'feedGames' : 'feedCustom');
+  function feedItems() {
+    const q = ($('#feedq').value || '').trim().toLowerCase(), out = [];
+    FEEDS.forEach(f => {
+      if (!f.on || (feedCat !== 'all' && f.cat !== feedCat)) return;
+      (f.items || []).forEach(it => {
+        if (q && !((it.title || '') + ' ' + (it.desc || '') + ' ' + f.title).toLowerCase().includes(q)) return;
+        out.push(Object.assign({ src: f.title }, it));
+      });
+    });
+    return out.sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 120);
+  }
+  function renderFeedChips() {
+    const L = $('#fchips'); L.innerHTML = '';
+    [['all', 'feedAll'], ['news', 'feedNews'], ['politics', 'feedPolitics'], ['games', 'feedGames']].forEach(([c, k]) => {
+      const b = document.createElement('button'); b.className = 'chip' + (feedCat === c ? ' on' : ''); b.textContent = t(k);
+      b.onclick = () => { feedCat = c; renderFeedChips(); renderFeed(); }; L.append(b);
+    });
+  }
+  function feedOpen(it) { if (!it.link) return; try { if (NATIVE && NATIVE.openUrl) NATIVE.openUrl(it.link); else window.open(it.link, '_blank'); } catch (e) {} }
+  function renderFeed() {
+    const L = $('#feedlist'); if (!L) return; L.innerHTML = '';
+    if (!FEEDS.length) { L.innerHTML = '<div class="empty">' + t('feedNoSources') + '</div>'; return; }
+    const items = feedItems();
+    if (!items.length) { L.innerHTML = '<div class="empty">' + t('feedEmpty') + '</div>'; return; }
+    items.forEach(it => {
+      const c = document.createElement('article'); c.className = 'fcard';
+      const top = document.createElement('div'); top.className = 'ftop';
+      const s = document.createElement('b'); s.textContent = it.src || '';
+      const tm = document.createElement('span'); tm.textContent = it.ts ? new Date(it.ts).toLocaleDateString(I18N.lang) : '';
+      top.append(s, tm);
+      const h = document.createElement('h3'); h.textContent = it.title;
+      if (it.link) { h.className = 'flink'; h.onclick = () => feedOpen(it); }
+      const p = document.createElement('p'); p.textContent = it.desc || '';
+      const row = document.createElement('div'); row.className = 'facts';
+      const btn = (label, fn) => { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; row.append(b); };
+      btn('↗ ' + t('feedOpen'), () => feedOpen(it));
+      btn('🌐 ' + t('feedTranslate'), () => feedAI('translate', (it.title || '') + '\n' + (it.desc || ''), ''));
+      btn('📝 ' + t('feedSummary'), () => feedAI('summary', it.desc || it.title, it.title));
+      btn('🔍 ' + t('feedAnalyze'), () => feedAI('analyze', it.desc || it.title, it.title));
+      if (it.img) { const im = new Image(); im.className = 'fthumb'; im.loading = 'lazy'; im.src = it.img; im.onerror = () => im.remove(); c.append(im); }
+      c.append(top, h, p, row); L.append(c);
+    });
+  }
+  async function feedRefresh(one, quiet) {
+    const list = one ? [one] : FEEDS.filter(f => f.on); if (!list.length) return;
+    if (!quiet) toast(t('feedRefreshing'));
+    await Promise.all(list.map(async f => {
+      try { f.items = (await ShilaFeed.load(f, S.set.feed.proxy)).slice(0, ShilaFeed.MAX_ITEMS); f.last = Date.now(); f.err = ''; }
+      catch (e) { f.err = String(e && e.message || 'err').slice(0, 100); }
+    }));
+    feedLastRun = Date.now(); await feedSave(); renderFeed(); renderSources();
+    if (!quiet) toast(t('feedUpdated'));
+  }
+  function renderSources() {
+    const L = $('#feedsrcList'); if (!L) return; L.innerHTML = '';
+    if (!FEEDS.length) L.innerHTML = '<div class="empty">' + t('feedNoSources') + '</div>';
+    FEEDS.forEach(f => {
+      const r = document.createElement('div'); r.className = 'fsrow';
+      r.innerHTML = '<div class="mid"><b></b><span></span><small></small></div><div class="fsbtns"></div>';
+      r.querySelector('b').textContent = f.title; r.querySelector('span').textContent = f.url;
+      r.querySelector('small').textContent = feedCatLabel(f.cat) + ' · ' + ((f.items || []).length) + ' ' + t('feedItems') + (f.err ? ' · ' + t('feedErr') + ': ' + f.err : '');
+      const B = r.querySelector('.fsbtns');
+      const mk = (txt, fn) => { const b = document.createElement('button'); b.textContent = txt; b.onclick = fn; B.append(b); };
+      mk(f.on ? '✅' : '⬜', async () => { f.on = f.on ? 0 : 1; await feedSave(); renderSources(); renderFeed(); });
+      mk('↻', () => feedRefresh(f));
+      mk('✕', async () => { if (!confirm(t('feedConfirmRemove'))) return; FEEDS = FEEDS.filter(x => x.id !== f.id); await feedSave(); renderSources(); renderFeed(); });
+      L.append(r);
+    });
+    const P = $('#fspresets'); P.innerHTML = '';
+    FEED_PRESETS.forEach(p => {
+      const b = document.createElement('button'); b.className = 'chip'; b.textContent = '+ ' + p.t;
+      b.onclick = async () => {
+        if (FEEDS.some(f => f.url === p.u)) return toast(t('feedExists'));
+        FEEDS.push({ id: rid(8), url: p.u, title: p.t, cat: p.c, on: 1, items: [], last: 0 });
+        await feedSave(); renderSources(); renderFeed(); feedRefresh(FEEDS[FEEDS.length - 1]);
+      }; P.append(b);
+    });
+    $('#feedevery').value = S.set.feed.every || 30;
+    $('#feedlang').value = S.set.feed.lang || 'ar';
+    $('#feedproxy').value = S.set.feed.proxy || '';
+  }
+  async function feedAI(kind, text, title) {
+    if (!window.ShilaBot || !BOT.api) { toast(t('feedNeedKey')); showPage('bot'); return; }
+    sheet('ai');
+    const body = $('#aibody'); $('#aititle').textContent = t('feedAI' + kind);
+    body.textContent = t('botThinking') + ' '; body.append(typingDots());
+    const lang = S.set.feed.lang || 'ar', src = (title ? title + '\n' : '') + String(text || '').slice(0, 5000);
+    const prompts = {
+      translate: 'ترجم النص التالي إلى ' + lang + '. أعد الترجمة فقط دون أي شرح:\n' + src,
+      summary: 'لخّص النص التالي في ٣ نقاط موجزة بلغة ' + lang + ':\n' + src,
+      analyze: 'حلّل النص التالي بلغة ' + lang + '، ووضّح أهميته وأبرز الحقائق والأثر المتوقع بأسلوب موضوعي مختصر:\n' + src,
+      digest: 'أنت محرر أخبار. حوّل العناوين التالية إلى موجز في ٥ نقاط بلغة ' + lang + '، مع ذكر المصدر إن وُجد:\n' + src
+    };
+    let ans = '';
+    try { ans = await window.ShilaBot.ask(BOT, [], prompts[kind] || prompts.summary); body.textContent = ans; }
+    catch (e) { body.textContent = t('botFail') + (e && e.message ? e.message.slice(0, 180) : '?'); }
+    $('#aiout').onclick = () => { if (ans) copyText(ans); };
+  }
+  PG_ON.feed = () => {
+    renderFeedChips(); renderFeed();
+    if (FEEDS.length && !FEEDS.some(f => (f.items || []).length)) feedRefresh(null, true);
+  };
+  PG_ON.feedsrc = renderSources;
+  $('#feedq').oninput = renderFeed;
+  $('#feedrefresh').onclick = () => feedRefresh();
+  $('#feedmanage').onclick = () => showPage('feedsrc');
+  $('#feedai').onclick = () => {
+    const items = feedItems().slice(0, 25); if (!items.length) return toast(t('feedEmpty'));
+    feedAI('digest', items.map(i => '- ' + i.src + ': ' + i.title + (i.desc ? ' — ' + i.desc.slice(0, 140) : '')).join('\n'), '');
+  };
+  $('#fsadd').onclick = async () => {
+    const u = ShilaFeed.safeUrl($('#fsurl').value); if (!u) return alert(t('feedBadUrl'));
+    let host = u; try { host = new URL(u).hostname; } catch (e) {}
+    FEEDS.push({ id: rid(8), url: u, title: noCtl($('#fstitle').value, 40) || host, cat: $('#fscat').value, on: 1, items: [], last: 0 });
+    $('#fsurl').value = ''; $('#fstitle').value = ''; await feedSave(); renderSources(); renderFeed(); toast(t('feedSaved'));
+  };
+  $('#feedsetSave').onclick = async () => {
+    S.set.feed.every = Math.max(5, Math.min(720, Number($('#feedevery').value) || 30));
+    S.set.feed.lang = $('#feedlang').value; S.set.feed.proxy = $('#feedproxy').value.trim().slice(0, 500);
+    save(); toast(t('saved')); renderSources();
+  };
+  setInterval(() => {
+    const n = Number(S.set.feed.every) || 30;
+    if (FEEDS.length && Date.now() - feedLastRun >= n * 60000) feedRefresh(null, true);
+  }, 60000);
+
   // ---------- boot ----------
   function applyLang() {
-    $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t)); document.documentElement.style.setProperty('--sd', I18N.lang === 'ar' ? 1 : -1);
+    $$('[data-t]').forEach(e => e.textContent = t(e.dataset.t)); $$('[data-t-ph]').forEach(e => e.placeholder = t(e.dataset.tPh)); document.documentElement.style.setProperty('--sd', I18N.lang === 'ar' ? 1 : -1);
     if ($('#qrbox') && !$('#qrbox').hidden) $('#paqrtxt').textContent = t('hideQR');
     $('#gn').placeholder = t('groupName'); $('#cap').placeholder = t('stickerText'); $('#efa').placeholder = t('bioPh'); $('#gq').placeholder = t('searchPh');
-    $('#pollq').placeholder = t('pollQ'); $('#schedtxt').placeholder = t('scheduleText');
+    $('#pollq').placeholder = t('pollQ'); $('#schedtxt').placeholder = t('scheduleText'); $('#feedq').placeholder = t('feedSearch');
     list(); updateComposer(); if (cur) { drawHead(); draw(); }
   }
   if (window.__DEBUG) window.__app = { ME, fillView, openStatus, statusTick, receiveProfile, S, conns, rot, seen, on, checkRotation, dirLookup, open, list, sendMsg, sweep, react, togglePin, getM, handlePlain, sendCtlQ, tsvLoop, askPassword, saveTsv, get TSV() { return TSV; }, get M() { return M; }, get typing() { return typing; }, get dirPeer() { return dirPeer; }, get call() { return call; } };
