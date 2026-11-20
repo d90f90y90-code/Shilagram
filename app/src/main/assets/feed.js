@@ -30,6 +30,58 @@
     }
     return '';
   }
+  function resolveUrl(src, base) {
+    if (!src) return '';
+    try { const u = new URL(src, base); return /^https?:$/.test(u.protocol) && u.href.length < 2000 ? u.href : ''; }
+    catch (e) { return safeUrl(src); }
+  }
+  function imgSrc(el, base) {
+    let s = el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original');
+    if (!s) { const ss = el.getAttribute('srcset'); if (ss) s = ss.split(',')[0].trim().split(/\s+/)[0]; }
+    return resolveUrl(s, base);
+  }
+  // Lightweight readability: pick the richest container, keep text blocks and images, drop everything else.
+  function extractArticle(html, base) {
+    const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    doc.querySelectorAll('script,style,noscript,iframe,form,nav,header,footer,aside,button,svg,video,audio').forEach(e => e.remove());
+    const sels = ['article', '[itemprop="articleBody"]', '.entry-content', '.post-content', '.article-content', '.articleBody', '.story-content', '.detail-content', 'main', '[role="main"]', '#content', '.content'];
+    let root = null, best = 0;
+    for (const s of sels) for (const el of doc.querySelectorAll(s)) {
+      const len = (el.textContent || '').trim().length;
+      if (len > best) { best = len; root = el; }
+    }
+    if (!root || best < 180) root = doc.body || doc.documentElement;
+    const out = [], texts = new Set(), seen = new Set(); let imgs = 0;
+    const push = (tag, txt) => {
+      const k = txt.slice(0, 160); if (texts.has(k)) return; texts.add(k);
+      out.push({ k: 't', tag, x: txt });
+    };
+    const walk = el => {
+      for (const node of el.children) {
+        const tag = node.tagName.toLowerCase();
+        if (['p', 'h1', 'h2', 'h3', 'h4', 'li', 'blockquote'].includes(tag)) {
+          const txt = (node.textContent || '').replace(/\s+/g, ' ').trim();
+          if (txt.length > 2 && txt.length < 4000) push(tag, txt);
+          walk(node);
+        } else if (tag === 'img') {
+          const src = imgSrc(node, base);
+          if (src && imgs < 30 && !seen.has(src)) { seen.add(src); imgs++; out.push({ k: 'i', x: src }); }
+        } else if (tag === 'figure' || tag === 'div' || tag === 'section' || tag === 'td') {
+          const img = node.querySelector('img');
+          if (img && !node.querySelector('p, h1, h2, h3, li, blockquote')) {
+            const src = imgSrc(img, base);
+            if (src && imgs < 30 && !seen.has(src)) { seen.add(src); imgs++; out.push({ k: 'i', x: src }); }
+          } else walk(node);
+        }
+      }
+    };
+    walk(root);
+    if (!out.length) {
+      (root.textContent || '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?؟])\s+/)
+        .filter(x => x.length > 30).slice(0, 80).forEach(x => push('p', x));
+    }
+    return out.slice(0, 160);
+  }
   const when = v => { const d = new Date(v); return isNaN(+d) ? Date.now() : Math.min(+d, Date.now() + 86400000); };
   const itemId = (x, src) => String(x.guid || x.id || x.link || x.title || '').slice(0, 160) || src;
 
@@ -46,7 +98,8 @@
       let img = nodeUrl(n, ['thumbnail', 'content', 'image', 'enclosure']) || '';
       if (!img) { const m = descHtml.match(/<img[^>]+src=["']([^"']+)["']/i); if (m) img = safeUrl(m[1]); }
       return { id: itemId({ guid: nodeText(n, ['guid', 'id']), link, title }, src), title, link,
-        desc: stripHtml(descHtml), ts: when(nodeText(n, ['pubDate', 'published', 'updated', 'date'])), img };
+        desc: stripHtml(descHtml), ts: when(nodeText(n, ['pubDate', 'published', 'updated', 'date'])), img,
+        html: descHtml.slice(0, 60000) };
     }).filter(x => x.title).slice(0, MAX_ITEMS);
   }
   function parseJson(j, src) {
@@ -55,8 +108,9 @@
       const title = stripHtml(it.title);
       let img = safeUrl(it.thumbnail || it.image || (it.enclosure && it.enclosure.link) || '');
       if (!img) { const m = String(it.description || it.content || '').match(/<img[^>]+src=["']([^"']+)["']/i); if (m) img = safeUrl(m[1]); }
+      const html = String(it.description || it.content || '');
       return { id: itemId({ guid: it.guid, link: it.link, title }, src), title, link: safeUrl(it.link),
-        desc: stripHtml(it.description || it.content || ''), ts: when(it.pubDate), img };
+        desc: stripHtml(html), ts: when(it.pubDate), img, html: html.slice(0, 60000) };
     }).filter(x => x.title).slice(0, MAX_ITEMS);
   }
   // Proxy templates receive {url}. The last one answers JSON, the others raw XML.
@@ -70,8 +124,9 @@
     const c = new AbortController(), t = setTimeout(() => c.abort(), TIMEOUT);
     return { signal: c.signal, done: () => clearTimeout(t) };
   }
-  async function raw(url, custom) {
-    const tpl = [custom, ...PROXIES].filter(Boolean);
+  async function raw(url, custom, kind) {
+    const pool = kind === 'html' ? PROXIES.filter(p => !p.includes('rss2json')) : PROXIES;
+    const tpl = [custom, ...pool].filter(Boolean);
     let err;
     for (const t of tpl) {
       let s;
@@ -93,5 +148,18 @@
     const txt = await raw(url, custom); const t = txt.trim();
     return t[0] === '{' ? parseJson(JSON.parse(t), url) : parseXml(t, url);
   }
-  G.ShilaFeed = { safeUrl, stripHtml, parseXml, parseJson, load, PROXIES, MAX_ITEMS };
+  async function article(item, custom) {
+    const base = safeUrl(item && item.link), saved = String(item && item.html || '');
+    let source = saved, err;
+    if (base) {
+      try { source = await raw(base, custom, 'html'); }
+      catch (e) { err = e; if (!saved) throw e; }
+    }
+    if (!source) throw err || new Error('article: empty');
+    let blocks = extractArticle(source, base || 'https://example.com/');
+    if (!blocks.length && saved && source !== saved) blocks = extractArticle(saved, base || 'https://example.com/');
+    if (!blocks.length) throw new Error('article: no content');
+    return blocks;
+  }
+  G.ShilaFeed = { safeUrl, stripHtml, parseXml, parseJson, load, article, PROXIES, MAX_ITEMS };
 })(window);

@@ -863,3 +863,12 @@ header small { font-size: 11.5px; opacity: .8; }
 }
 .nomo .fcard { animation: none; }
 @media (prefers-reduced-motion: reduce) { .fcard { animation: none; } }
+
+/* In-app full article reader */
+.articlebody { padding: 14px 18px 30px; line-height: 1.85; }
+.articlebody p { margin: 0 0 14px; font-size: 14.5px; }
+.articlebody h1, .articlebody h2, .articlebody h3, .articlebody h4 { margin: 20px 0 10px; font-size: 16px; line-height: 1.5; color: var(--pri); }
+.articlebody blockquote { margin: 14px 0; padding: 10px 14px; border-inline-start: 3px solid var(--pri); background: var(--bg2); border-radius: 0 12px 12px 0; font-size: 14px; }
+.articlebody img { display: block; width: 100%; height: auto; margin: 14px 0; border-radius: 12px; background: var(--bg2); }
+.articlebody .empty { text-align: center; padding: 30px 10px; color: var(--mut); font-size: 13px; }
+.articlebody > .btn { width: 100%; }

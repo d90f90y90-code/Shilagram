@@ -79,10 +79,18 @@
     { t: 'Al Jazeera', u: 'https://www.aljazeera.com/xml/rss/all.xml', c: 'news' },
     { t: 'BBC Politics', u: 'https://feeds.bbci.co.uk/news/politics/rss.xml', c: 'politics' },
     { t: 'IGN Games', u: 'https://feeds.ign.com/ign/games-all', c: 'games' },
-    { t: 'GameSpot', u: 'https://www.gamespot.com/feeds/news/', c: 'games' }
+    { t: 'GameSpot', u: 'https://www.gamespot.com/feeds/news/', c: 'games' },
+    { t: 'CMC Iraq', u: 'https://cmc.iq/feed/', c: 'news' },
+    { t: 'True Gaming', u: 'https://www.true-gaming.net/home/feed/', c: 'games' },
+    { t: 'INA Iraq', u: 'https://ina.iq/rssdzen.xml', c: 'news' }
   ];
-  let FEEDS = (await DB.get('feeds')) || [], feedCat = 'all', feedLastRun = 0;
+  let FEEDS = await DB.get('feeds'), feedCat = 'all', feedLastRun = 0;
+  if (FEEDS === undefined || FEEDS === null) { // first run: three useful Iraqi/gaming sources ready to go
+    FEEDS = FEED_PRESETS.filter(p => /cmc\.iq|true-gaming\.net|ina\.iq/.test(p.u))
+      .map(p => ({ id: rid(8), url: p.u, title: p.t, cat: p.c, on: 1, items: [], last: 0 }));
+  } else FEEDS = FEEDS || [];
   const feedSave = () => DB.set('feeds', FEEDS);
+  feedSave();
   const botClean = x => String(x || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 4000);
   function botKey() { let k = ''; for (let i = 0; i < 6; i++) k += String.fromCharCode(65 + R(26)); for (let i = 0; i < 4; i++) k += R(10); return k; }
   async function botIdentity() {
@@ -1957,7 +1965,27 @@
       b.onclick = () => { feedCat = c; renderFeedChips(); renderFeed(); }; L.append(b);
     });
   }
-  function feedOpen(it) { if (!it.link) return; try { if (NATIVE && NATIVE.openUrl) NATIVE.openUrl(it.link); else window.open(it.link, '_blank'); } catch (e) {} }
+  function feedExternal(url) { if (!url) return; try { if (NATIVE && NATIVE.openUrl) NATIVE.openUrl(url); else window.open(url, '_blank'); } catch (e) {} }
+  async function feedOpen(it) {
+    if (!it || (!it.link && !it.html)) return;
+    showPage('article');
+    const body = $('#articleBody'); $('#artext').hidden = !it.link;
+    $('#arttitle').textContent = it.title || t('articleTitle');
+    body.innerHTML = ''; body.textContent = t('articleLoading') + ' '; body.append(typingDots());
+    try {
+      const blocks = await ShilaFeed.article(it, S.set.feed.proxy);
+      body.innerHTML = '';
+      blocks.forEach(b => {
+        if (b.k === 'i') { const im = new Image(); im.src = b.x; im.alt = ''; im.loading = 'lazy'; im.onerror = () => im.remove(); body.append(im); }
+        else { const el = document.createElement(/^h[1-4]$/.test(b.tag) ? b.tag : (b.tag === 'blockquote' ? 'blockquote' : 'p')); el.textContent = b.x; body.append(el); }
+      });
+      $('#artext').onclick = () => feedExternal(it.link);
+    } catch (e) {
+      body.innerHTML = '';
+      const p = document.createElement('p'); p.className = 'empty'; p.textContent = t('articleFail'); body.append(p);
+      if (it.link) { const b = document.createElement('button'); b.className = 'btn'; b.textContent = t('articleOpenExternal'); b.onclick = () => feedExternal(it.link); body.append(b); }
+    }
+  }
   function renderFeed() {
     const L = $('#feedlist'); if (!L) return; L.innerHTML = '';
     if (!FEEDS.length) { L.innerHTML = '<div class="empty">' + t('feedNoSources') + '</div>'; return; }
