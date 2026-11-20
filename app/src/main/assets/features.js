@@ -59,21 +59,35 @@
   // stored as { k: 'e'|'i', v: emoji | small data-URL, x: expiry timestamp (0 = never) }; sent as { k, v, r: ms left (0 = never) }
   const STATUS_HOURS = [1, 4, 12, 24, 72, 168, 0];         // presets offered in the UI (0 = no timer)
   const STATUS_MAX_MS = 30 * DAY, STATUS_IMG_MAX = 9000;
+  const STATUS_MEDIA_RE = /^[A-Za-z0-9_-]{4,24}$/;          // local id for a video kept on the owner's device
   const EMOJI_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator}|\u200d|\ufe0f|\u20e3|[#*0-9](?=\ufe0f?\u20e3))+$/u;
   const okEmoji = v => typeof v === 'string' && v.length > 0 && v.length <= 24 && EMOJI_RE.test(v);
   const okStatusImg = v => typeof v === 'string' && v.length <= STATUS_IMG_MAX && /^data:image\/(?:png|webp|jpeg);base64,[A-Za-z0-9+\/=]+$/.test(v);
   const hoursToMs = h => { h = Number(h); return Number.isFinite(h) && h > 0 && h * 3600000 <= STATUS_MAX_MS ? Math.round(h * 3600000) : 0; };
-  function makeStatus(k, v, hours, now) { // what the owner stores; null if the content is not acceptable
-    if (!(k === 'e' ? okEmoji(v) : k === 'i' && okStatusImg(v))) return null;
-    const ms = hoursToMs(hours); return { k, v, x: ms ? now + ms : 0 };
+  const okStatusContent = (k, v) => (k === 'e' && okEmoji(v)) || ((k === 'i' || k === 'v') && okStatusImg(v)); // 'e' kept for old peers
+  function makeStatus(k, v, hours, now, vid, img) { // what the owner stores; null if the content is not acceptable
+    if (!okStatusContent(k, v)) return null;
+    const ms = hoursToMs(hours), st = { k, v, x: ms ? now + ms : 0 };
+    if (k === 'v' && STATUS_MEDIA_RE.test(vid || '')) st.vid = vid;
+    if (k === 'i' && STATUS_MEDIA_RE.test(img || '')) st.img = img;
+    return st;
   }
   const statusActive = (st, now) => !!st && (st.x === 0 || st.x > now);
-  const statusHdr = (st, now) => statusActive(st, now) ? { k: st.k, v: st.v, r: st.x ? st.x - now : 0 } : '';
+  function statusHdr(st, now) {
+    if (!statusActive(st, now)) return '';
+    const h = { k: st.k, v: st.v, r: st.x ? st.x - now : 0 };
+    if (st.vid) h.vid = st.vid;
+    if (st.img) h.img = st.img;
+    return h;
+  }
   function cleanStatus(h, now) { // what a receiver keeps; anything odd is dropped
     if (!h || typeof h !== 'object') return null; const r = Number(h.r);
     if (!Number.isFinite(r) || r < 0 || r > STATUS_MAX_MS) return null;
-    if (!(h.k === 'e' ? okEmoji(h.v) : h.k === 'i' && okStatusImg(h.v))) return null;
-    return { k: h.k, v: h.v, x: r ? now + r : 0 };
+    if (!okStatusContent(h.k, h.v)) return null;
+    const st = { k: h.k, v: h.v, x: r ? now + r : 0 };
+    if (h.k === 'v' && STATUS_MEDIA_RE.test(h.vid || '')) st.vid = h.vid;
+    if (h.k === 'i' && STATUS_MEDIA_RE.test(h.img || '')) st.img = h.img;
+    return st;
   }
   function statusLeft(st, now) { if (!st || !st.x) return null; const ms = Math.max(0, st.x - now), m = Math.ceil(ms / 60000); return m >= 2880 ? { n: Math.round(m / 1440), u: 'd' } : m >= 120 ? { n: Math.round(m / 60), u: 'h' } : { n: Math.max(1, m), u: 'm' }; }
 
